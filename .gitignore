@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Виртуальное окружение
+.venv-1/
+.venv/
+
+# Данные и локальная конфигурация подключения (пароли, пути к базе)
+data/
+db_config.json
+
+# Артефакты сборки PyInstaller
+build/
+dist/
+*.spec.local
+
+# Локальные архивы и артефакты
+*.zip
+*.pdf

@@ -1,0 +1,13 @@
+﻿Name;Group;Address;Type;Scale;Offset;Unit
+Feed_bear;Смазка;0;UINT16;1.0;0.0;
+Feed_ecc;Смазка;1;UINT16;1.0;0.0;
+Level;Смазка;2;UINT16;1.0;0.0;
+Serv_ecc;Смазка;3;UINT16;1.0;0.0;
+Serv_bear;Смазка;4;UINT16;1.0;0.0;
+Machine_ON;Статус / Автоматика;5;UINT16;1.0;0.0;
+K1_lubr;Смазка;6;UINT16;1.0;0.0;
+Sw_valve_lubr;Смазка;7;UINT16;1.0;0.0;
+K2_lubr_not_realise;Смазка;8;UINT16;1.0;0.0;
+RSSI;Связь и диагностика;9;UINT16;1.0;-100.0;Dbm
+BIT;Статус / Автоматика;10;UINT16;1.0;0.0;
+KEEP;Статус / Автоматика;11;UINT16;1.0;0.0;

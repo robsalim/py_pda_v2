@@ -1,0 +1,155 @@
+{
+  "version": "2.0",
+  "connections": [
+    {
+      "name": "Local Modbus Server",
+      "driver_type": "modbus_server",
+      "enabled": true,
+      "poll_interval_ms": 100,
+      "config": {
+        "port": 502
+      },
+      "groups": [
+        "Связь и диагностика",
+        "Смазка",
+        "Статус / Автоматика"
+      ],
+      "tags": [
+        {
+          "name": "Feed_bear",
+          "group_name": "Смазка",
+          "address_str": "0",
+          "data_type": "UINT16",
+          "scale": 1.0,
+          "offset_val": 0.0,
+          "unit": ""
+        },
+        {
+          "name": "Feed_ecc",
+          "group_name": "Смазка",
+          "address_str": "1",
+          "data_type": "UINT16",
+          "scale": 1.0,
+          "offset_val": 0.0,
+          "unit": ""
+        },
+        {
+          "name": "Level",
+          "group_name": "Смазка",
+          "address_str": "2",
+          "data_type": "UINT16",
+          "scale": 1.0,
+          "offset_val": 0.0,
+          "unit": ""
+        },
+        {
+          "name": "Serv_ecc",
+          "group_name": "Смазка",
+          "address_str": "3",
+          "data_type": "UINT16",
+          "scale": 1.0,
+          "offset_val": 0.0,
+          "unit": ""
+        },
+        {
+          "name": "Serv_bear",
+          "group_name": "Смазка",
+          "address_str": "4",
+          "data_type": "UINT16",
+          "scale": 1.0,
+          "offset_val": 0.0,
+          "unit": ""
+        },
+        {
+          "name": "Machine_ON",
+          "group_name": "Статус / Автоматика",
+          "address_str": "5",
+          "data_type": "UINT16",
+          "scale": 1.0,
+          "offset_val": 0.0,
+          "unit": ""
+        },
+        {
+          "name": "K1_lubr",
+          "group_name": "Смазка",
+          "address_str": "6",
+          "data_type": "UINT16",
+          "scale": 1.0,
+          "offset_val": 0.0,
+          "unit": ""
+        },
+        {
+          "name": "Sw_valve_lubr",
+          "group_name": "Смазка",
+          "address_str": "7",
+          "data_type": "UINT16",
+          "scale": 1.0,
+          "offset_val": 0.0,
+          "unit": ""
+        },
+        {
+          "name": "K2_lubr_not_realise",
+          "group_name": "Смазка",
+          "address_str": "8",
+          "data_type": "UINT16",
+          "scale": 1.0,
+          "offset_val": 0.0,
+          "unit": ""
+        },
+        {
+          "name": "RSSI",
+          "group_name": "Связь и диагностика",
+          "address_str": "9",
+          "data_type": "UINT16",
+          "scale": 1.0,
+          "offset_val": -100.0,
+          "unit": "Dbm"
+        },
+        {
+          "name": "BIT",
+          "group_name": "Статус / Автоматика",
+          "address_str": "10",
+          "data_type": "UINT16",
+          "scale": 1.0,
+          "offset_val": 0.0,
+          "unit": ""
+        },
+        {
+          "name": "KEEP",
+          "group_name": "Статус / Автоматика",
+          "address_str": "11",
+          "data_type": "UINT16",
+          "scale": 1.0,
+          "offset_val": 0.0,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "name": "Siemens S7-1200",
+      "driver_type": "s7_1200",
+      "enabled": true,
+      "poll_interval_ms": 1000,
+      "config": {
+        "ip": "10.0.1.222",
+        "port": 102,
+        "rack": 0,
+        "slot": 1
+      },
+      "groups": [
+        "Общие"
+      ],
+      "tags": [
+        {
+          "name": "MW230",
+          "group_name": "Общие",
+          "address_str": "MW230",
+          "data_type": "INT16",
+          "scale": 1.0,
+          "offset_val": 0.0,
+          "unit": ""
+        }
+      ]
+    }
+  ]
+}

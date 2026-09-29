@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDA Web Viewer</title>
+    <link rel="stylesheet" href="https://unpkg.com/uplot@1.6.30/dist/uPlot.min.css">
+    <script src="https://unpkg.com/uplot@1.6.30/dist/uPlot.iife.min.js"></script>
+    <style>
+        body { margin: 0; padding: 0; background-color: #1E1E1E; color: #D8D8D8; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+        header { background: #252526; border-bottom: 1px solid #3F3F46; display: flex; align-items: center; padding: 0 16px; height: 44px; justify-content: space-between; }
+        .nav-left { display: flex; align-items: center; gap: 12px; }
+        .logo { font-weight: bold; font-size: 15px; color: #FFFFFF; margin-right: 16px; }
+        .tab-btn { background: none; border: none; color: #A0A0A0; font-size: 13px; font-weight: bold; padding: 12px 18px; cursor: pointer; border-bottom: 2px solid transparent; }
+        .tab-btn.active { color: #FFFFFF; border-bottom: 2px solid #007ACC; background: #2D2D30; }
+        
+        .cursor-info { display: flex; align-items: center; gap: 14px; background: #1E1E1E; padding: 4px 12px; border-radius: 4px; border: 1px solid #333337; font-size: 12px; font-weight: bold; }
+        .c-x1 { color: #FFD700; }
+        .c-x2 { color: #00E5FF; }
+        .c-dt { color: #00E676; }
+
+        .content { flex: 1; position: relative; overflow: hidden; }
+        .tab-page { display: none !important; width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
+        .tab-page.active { display: flex !important; }
+
+        /* Вкладка Charts */
+        #page-charts { flex-direction: row; }
+        .sidebar { width: 250px; background: #252526; border-right: 1px solid #3F3F46; display: flex; flex-direction: column; }
+        .sidebar-title { padding: 10px 12px; font-size: 11px; font-weight: bold; color: #858585; border-bottom: 1px solid #333337; text-transform: uppercase; }
+        .tag-list { flex: 1; overflow-y: auto; list-style: none; margin: 0; padding: 0; }
+        .tag-item { padding: 8px 12px; font-size: 13px; cursor: pointer; display: flex; justify-content: space-between; border-bottom: 1px solid #2D2D30; user-select: none; }
+        .tag-item:hover { background: #2A2D2E; color: #FFFFFF; }
+        
+        .chart-area { flex: 1; display: flex; flex-direction: column; padding: 8px; box-sizing: border-box; gap: 8px; overflow: hidden; }
+        .windows-toolbar { display: flex; align-items: center; gap: 8px; }
+        .chart-windows { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+        .chart-window { min-height: 260px; height: 420px; flex: 0 0 auto; position: relative; background: #181818; border: 1px solid #3F3F46; border-radius: 4px; overflow: hidden; }
+        .chart-window.active { border-color: #647C8C; }
+        .window-close { position: absolute; z-index: 10; top: 6px; right: 6px; width: 22px; height: 22px; padding: 0; background: #7A4B50; border-color: #956168; }
+        .controls-bar { display: flex; align-items: center; gap: 10px; background: #252526; padding: 6px 12px; border-radius: 4px; border: 1px solid #3F3F46; font-size: 12px; }
+        .chips-container { display: none; }
+        .chart-legend { position: absolute; z-index: 5; top: 12px; left: 12px; display: flex; flex-direction: column; gap: 3px; padding: 5px 8px; background: rgba(28, 28, 28, 0.70); border: 1px solid rgba(130, 130, 130, 0.30); border-radius: 4px; }
+        .legend-row { display: flex; align-items: center; gap: 6px; min-height: 18px; }
+        .legend-line { width: 38px; height: 3px; flex: 0 0 38px; }
+        .legend-name { font-size: 12px; font-weight: normal; white-space: nowrap; }
+        .legend-del { width: 18px; height: 18px; margin-left: 6px; padding: 0; border: none; background: transparent; color: #C8C8C8; font-size: 14px; line-height: 16px; font-weight: normal; }
+        .legend-del:hover { color: #FFFFFF; background: transparent; border: none; }
+        
+        select, input[type="datetime-local"], button { background: #2D2D30; border: 1px solid #55555A; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; cursor: pointer; }
+        button:hover { background: #3E3E42; border-color: #007ACC; }
+        .btn-load { background: #0E639C !important; font-weight: bold; }
+        .btn-load:hover { background: #1177BB !important; }
+        .chart-box { flex: 1; width: 100%; height: 100%; background: #181818; border: 1px solid #3F3F46; border-radius: 4px; position: relative; overflow: hidden; }
+
+        /* Вкладка Bits */
+        #page-bits { flex-direction: column; padding: 8px; box-sizing: border-box; gap: 8px; width: 100%; height: 100%; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="nav-left">
+            <div class="logo">PDA Web</div>
+            <button id="btn-tab-charts" class="tab-btn active" onclick="switchTab('charts')">Charts</button>
+            <button id="btn-tab-bits" class="tab-btn" onclick="switchTab('bits')">Bits</button>
+        </div>
+        <div class="cursor-info">
+            <span class="c-x1" id="lbl-x1">X1: —</span>
+            <span class="c-x2" id="lbl-x2">X2: —</span>
+            <span class="c-dt" id="lbl-dt">ΔT: —</span>
+        </div>
+    </header>
+
+    <div class="content">
+        <!-- 1. ВКЛАДКА CHARTS -->
+        <div id="page-charts" class="tab-page active">
+            <div class="sidebar">
+                <div class="sidebar-title">Сигналы в базе (клик)</div>
+                <ul class="tag-list" id="sidebar-tags">
+                    <li style="padding: 12px; color: #858585;">Загрузка тегов...</li>
+                </ul>
+            </div>
+            <div class="chart-area">
+                <div class="controls-bar">
+                    <label>Режим:</label>
+                    <select id="charts-mode" onchange="onModeChange('charts')">
+                        <option value="Live">Live</option>
+                        <option value="Archive">Archive</option>
+                    </select>
+
+                    <!-- Панель Live -->
+                    <span id="charts-live-panel">
+                        <label>Окно Live:</label>
+                        <select id="charts-span" onchange="reloadCharts(true)">
+                            <option value="15 мин">15 мин</option>
+                            <option value="1 час">1 час</option>
+                            <option value="4 часа">4 часа</option>
+                            <option value="12 часов">12 часов</option>
+                            <option value="24 часа" selected>24 часа</option>
+                            <option value="72 часа">72 часа</option>
+                        </select>
+                        <button id="btn-pause-charts" onclick="togglePause('charts')">⏸ Пауза</button>
+                    </span>
+
+                    <!-- Панель Archive -->
+                    <span id="charts-arch-panel" style="display: none;">
+                        <label>Начало:</label>
+                        <input type="datetime-local" id="charts-arch-start">
+                        <label>Длительность:</label>
+                        <select id="charts-arch-dur">
+                            <option value="15 мин">15 мин</option>
+                            <option value="1 час">1 час</option>
+                            <option value="4 часа">4 часа</option>
+                            <option value="12 часов">12 часов</option>
+                            <option value="24 часа" selected>24 часа</option>
+                            <option value="72 часа">72 часа</option>
+                        </select>
+                        <button onclick="shiftArchive('charts', -1)">◀</button>
+                        <button onclick="shiftArchive('charts', 1)">▶</button>
+                        <button class="btn-load" onclick="reloadCharts(true)">📥 Загрузить архив</button>
+                    </span>
+
+                    <div class="chips-container" id="active-chips"></div>
+                    <button onclick="resetZoom(getActiveWindow()?.chart)">🔍 100%</button>
+                    <button onclick="clearCharts()">✕ Очистить</button>
+                </div>
+                <div class="windows-toolbar">
+                    <button onclick="addChartWindow()">＋ Добавить график</button>
+                </div>
+                <div class="chart-windows" id="chart-windows"></div>
+            </div>
+        </div>
+
+        <!-- 2. ВКЛАДКА BITS -->
+        <div id="page-bits" class="tab-page">
+            <div class="controls-bar">
+                <label>Регистр:</label>
+                <select id="bits-signal-select" onchange="reloadBits(true)"></select>
+
+                <label>Режим:</label>
+                <select id="bits-mode" onchange="onModeChange('bits')">
+                    <option value="Live">Live</option>
+                    <option value="Archive">Archive</option>
+                </select>
+
+                <!-- Панель Live -->
+                <span id="bits-live-panel">
+                    <label>Окно Live:</label>
+                    <select id="bits-span" onchange="reloadBits(true)">
+                        <option value="15 мин">15 мин</option>
+                        <option value="1 час">1 час</option>
+                        <option value="4 часа">4 часа</option>
+                        <option value="12 часов">12 часов</option>
+                        <option value="24 часа" selected>24 часа</option>
+                        <option value="72 часа">72 часа</option>
+                    </select>
+                    <button id="btn-pause-bits" onclick="togglePause('bits')">⏸ Пауза</button>
+                </span>
+
+                <!-- Панель Archive -->
+                <span id="bits-arch-panel" style="display: none;">
+                    <label>Начало:</label>
+                    <input type="datetime-local" id="bits-arch-start">
+                    <label>Длительность:</label>
+                    <select id="bits-arch-dur">
+                        <option value="15 мин">15 мин</option>
+                        <option value="1 час">1 час</option>
+                        <option value="4 часа">4 часа</option>
+                        <option value="12 часов">12 часов</option>
+                        <option value="24 часа" selected>24 часа</option>
+                        <option value="72 часа">72 часа</option>
+                    </select>
+                    <button onclick="shiftArchive('bits', -1)">◀</button>
+                    <button onclick="shiftArchive('bits', 1)">▶</button>
+                    <button class="btn-load" onclick="reloadBits(true)">📥 Загрузить архив</button>
+                </span>
+
+                <button onclick="resetZoom(bitsChart)">🔍 100%</button>
+            </div>
+            <div class="chart-box" id="uplot-bits"></div>
+        </div>
+    </div>
+
+    <script>
+        let allTags = [];
+        let bitNameMap = {};
+        let mainChart = null;
+        let chartWindows = [];
+        let activeWindowId = null;
+        let bitsChart = null;
+        let cursorX1 = null;
+        let cursorX2 = null;
+        let chartsPaused = false;
+        let bitsPaused = false;
+        let userZoomedCharts = false;
+        let userZoomedBits = false;
+
+        const COLORS = ['#667EEA', '#FF6384', '#4BC0C0', '#FF9F40', '#9966FF', '#FFCD56', '#00E676', '#E91E63'];
+
+        function initDateTimeInputs() {
+            let now = new Date();
+            let past = new Date(now.getTime() - 24 * 3600 * 1000);
+            let toIsoStr = d => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+            document.getElementById('charts-arch-start').value = toIsoStr(past);
+            document.getElementById('bits-arch-start').value = toIsoStr(past);
+        }
+
+        function onModeChange(tab) {
+            let isLive = document.getElementById(`${tab}-mode`).value === 'Live';
+            document.getElementById(`${tab}-live-panel`).style.display = isLive ? 'inline-flex' : 'none';
+            document.getElementById(`${tab}-arch-panel`).style.display = isLive ? 'none' : 'inline-flex';
+            if (tab === 'charts') reloadCharts(true);
+            else reloadBits(true);
+        }
+
+        function togglePause(tab) {
+            if (tab === 'charts') {
+                chartsPaused = !chartsPaused;
+                document.getElementById('btn-pause-charts').innerText = chartsPaused ? '▶ Продолжить' : '⏸ Пауза';
+                if (!chartsPaused) reloadCharts(false);
+            } else {
+                bitsPaused = !bitsPaused;
+                document.getElementById('btn-pause-bits').innerText = bitsPaused ? '▶ Продолжить' : '⏸ Пауза';
+                if (!bitsPaused) reloadBits(false);
+            }
+        }
+
+        function getDurationMs(text) {
+            if (text.includes('15') && text.includes('мин')) return 15 * 60 * 1000;
+            if (text.includes('1') && text.includes('час') && !text.includes('12')) return 3600 * 1000;
+            if (text.includes('4') && text.includes('час') && !text.includes('24')) return 4 * 3600 * 1000;
+            if (text.includes('12')) return 12 * 3600 * 1000;
+            if (text.includes('72')) return 72 * 3600 * 1000;
+            if (text.includes('24')) return 24 * 3600 * 1000;
+            return 24 * 3600 * 1000;
+        }
+
+        function shiftArchive(tab, dir) {
+            let input = document.getElementById(`${tab}-arch-start`);
+            let durText = document.getElementById(`${tab}-arch-dur`).value;
+            let durMs = getDurationMs(durText);
+            let curr = new Date(input.value);
+            let next = new Date(curr.getTime() + (durMs * dir));
+            let toIsoStr = d => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+            input.value = toIsoStr(next);
+            if (tab === 'charts') reloadCharts(true);
+            else reloadBits(true);
+        }
+
+        function wheelZoomPlugin(chartType) {
+            return {
+                hooks: {
+                    ready: u => {
+                        let plot = u.root.querySelector(".u-over");
+                        plot.addEventListener("wheel", e => {
+                            e.preventDefault();
+                            if (chartType === 'charts') userZoomedCharts = true;
+                            else userZoomedBits = true;
+
+                            let factor = 0.85;
+                            let left = u.posToVal(e.clientX - plot.getBoundingClientRect().left, "x");
+                            let xMin = u.scales.x.min;
+                            let xMax = u.scales.x.max;
+                            let delta = xMax - xMin;
+
+                            let nextDelta = e.deltaY < 0 ? delta * factor : delta / factor;
+                            // Как в десктопе (minXRange=0.1): не приближать дальше ~10 мс на деление
+                            if (nextDelta < 0.1) nextDelta = 0.1;
+                            let ratio = (left - xMin) / delta;
+
+                            u.setScale("x", {
+                                min: left - ratio * nextDelta,
+                                max: left + (1 - ratio) * nextDelta,
+                            });
+                        });
+
+                        plot.addEventListener("dblclick", () => resetZoom(u));
+
+                        plot.addEventListener("click", e => {
+                            let valX = u.posToVal(e.clientX - plot.getBoundingClientRect().left, "x");
+                            if (e.ctrlKey || e.shiftKey) cursorX2 = valX;
+                            else cursorX1 = valX;
+                            updateCursorPanel();
+                            u.redraw();
+                        });
+
+                        plot.addEventListener("contextmenu", e => {
+                            e.preventDefault();
+                            cursorX2 = u.posToVal(e.clientX - plot.getBoundingClientRect().left, "x");
+                            updateCursorPanel();
+                            u.redraw();
+                        });
+                    },
+                    draw: u => {
+                        let ctx = u.ctx;
+                        let top = u.bbox.top;
+                        let height = u.bbox.height;
+                        ctx.save();
+
+                        if (cursorX1 != null) {
+                            let xPos = u.valToPos(cursorX1, "x", true);
+                            if (xPos >= u.bbox.left && xPos <= u.bbox.left + u.bbox.width) {
+                                ctx.strokeStyle = "#FFD700";
+                                ctx.lineWidth = 2;
+                                ctx.setLineDash([5, 4]);
+                                ctx.beginPath();
+                                ctx.moveTo(xPos, top);
+                                ctx.lineTo(xPos, top + height);
+                                ctx.stroke();
+                                ctx.fillStyle = "#FFD700";
+                                ctx.font = "bold 11px sans-serif";
+                                ctx.fillText("X1", xPos + 4, top + 14);
+                            }
+                        }
+
+                        if (cursorX2 != null) {
+                            let xPos = u.valToPos(cursorX2, "x", true);
+                            if (xPos >= u.bbox.left && xPos <= u.bbox.left + u.bbox.width) {
+                                ctx.strokeStyle = "#00E5FF";
+                                ctx.lineWidth = 2;
+                                ctx.setLineDash([5, 4]);
+                                ctx.beginPath();
+                                ctx.moveTo(xPos, top);
+                                ctx.lineTo(xPos, top + height);
+                                ctx.stroke();
+                                ctx.fillStyle = "#00E5FF";
+                                ctx.font = "bold 11px sans-serif";
+                                ctx.fillText("X2", xPos + 4, top + 14);
+                            }
+                        }
+                        ctx.restore();
+                    }
+                }
+            };
+        }
+
+        function resetZoom(u) {
+            if (!u) return;
+            if (u === mainChart) userZoomedCharts = false;
+            if (u === bitsChart) userZoomedBits = false;
+            u.setData(u.data, true);
+        }
+
+        function formatTime(sec) {
+            if (!sec) return "—";
+            let d = new Date(sec * 1000);
+            return `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')} ${d.toTimeString().split(' ')[0]}.${String(d.getMilliseconds()).padStart(3, '0')}`;
+        }
+
+        function updateCursorPanel() {
+            document.getElementById("lbl-x1").innerText = "X1: " + (cursorX1 ? formatTime(cursorX1) : "—");
+            document.getElementById("lbl-x2").innerText = "X2: " + (cursorX2 ? formatTime(cursorX2) : "—");
+
+            if (cursorX1 && cursorX2) {
+                let dt = Math.abs(cursorX2 - cursorX1);
+                let totalSec = Math.floor(dt);
+                let ms = Math.floor((dt - totalSec) * 1000);
+                let hh = Math.floor(totalSec / 3600);
+                let mm = Math.floor((totalSec % 3600) / 60);
+                let ss = totalSec % 60;
+                let sMM = String(mm).padStart(2, '0');
+                let sSS = String(ss).padStart(2, '0');
+                let sMS = String(ms).padStart(3, '0');
+                if (hh > 0) document.getElementById("lbl-dt").innerText = `ΔT: ${hh}ч ${sMM}м ${sSS}с ${sMS}мс`;
+                else document.getElementById("lbl-dt").innerText = `ΔT: ${mm}м ${sSS}с ${sMS}мс`;
+            } else {
+                document.getElementById("lbl-dt").innerText = "ΔT: —";
+            }
+        }
+
+        function switchTab(name) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-page').forEach(p => p.classList.remove('active'));
+
+            document.getElementById(`btn-tab-${name}`).classList.add('active');
+            document.getElementById(`page-${name}`).classList.add('active');
+
+            if (name === 'charts') {
+                setTimeout(() => { if (mainChart) resizeChart(mainChart, 'uplot-chart'); }, 50);
+            } else if (name === 'bits') {
+                setTimeout(() => {
+                    if (bitsChart) resizeChart(bitsChart, 'uplot-bits');
+                    else reloadBits(true);
+                }, 50);
+            }
+        }
+
+        async function fetchTags() {
+            const list = document.getElementById('sidebar-tags');
+            try {
+                const res = await fetch('/api/tags');
+                allTags = await res.json();
+                bitNameMap = {};
+                allTags.forEach(t => {
+                    if (t.address <= 8) bitNameMap[t.address] = `${t.name} (B${t.address})`;
+                });
+                renderSidebar();
+                renderBitSelect();
+            } catch (e) {
+                list.innerHTML = `<li style="padding:12px; color:#FF6384;">Ошибка: ${e.message}</li>`;
+            }
+        }
+
+        function renderSidebar() {
+            const list = document.getElementById('sidebar-tags');
+            list.innerHTML = allTags.map(t => `
+                <li class="tag-item" draggable="true" ondragstart="dragSignal(event, ${t.id})" onclick="addSignal(${t.id})">
+                    <span>${t.name}</span>
+                    <span style="color:#858585; font-size: 11px;">${t.unit || ''}</span>
+                </li>
+            `).join('');
+        }
+
+        function renderBitSelect() {
+            const sel = document.getElementById('bits-signal-select');
+            if (sel.children.length === 0 && allTags.length > 0) {
+                sel.innerHTML = allTags.map(t => `<option value="${t.id}" ${t.name === 'BIT' ? 'selected' : ''}>${t.name}</option>`).join('');
+            }
+        }
+
+        // --- CHARTS LOGIC ---
+        function getChartsUrl(tagId) {
+            let isLive = document.getElementById('charts-mode').value === 'Live';
+            if (isLive) {
+                let span = document.getElementById('charts-span').value;
+                return `/api/points/${tagId}?span=${encodeURIComponent(span)}`;
+            } else {
+                let start = document.getElementById('charts-arch-start').value;
+                let dur = document.getElementById('charts-arch-dur').value;
+                return `/api/archive/${tagId}?start=${encodeURIComponent(start)}&duration=${encodeURIComponent(dur)}`;
+            }
+        }
+
+        function getActiveWindow() {
+            return chartWindows.find(w => w.id === activeWindowId) || chartWindows[0];
+        }
+
+        function dragSignal(event, tagId) {
+            event.dataTransfer.effectAllowed = 'copy';
+            event.dataTransfer.setData('text/plain', String(tagId));
+        }
+
+        function addChartWindow() {
+            const id = Date.now() + Math.random();
+            const box = document.createElement('div');
+            box.className = 'chart-window';
+            box.dataset.windowId = id;
+            box.innerHTML = `<button class="window-close" onclick="removeChartWindow(${id}); event.stopPropagation();">×</button><div class="chart-box"><div class="chart-legend" style="display:none;"></div></div>`;
+            box.addEventListener('click', () => selectChartWindow(id));
+            box.addEventListener('dragover', event => { event.preventDefault(); box.classList.add('drop-target'); });
+            box.addEventListener('dragleave', () => box.classList.remove('drop-target'));
+            box.addEventListener('drop', event => { event.preventDefault(); box.classList.remove('drop-target'); selectChartWindow(id); const tagId = Number(event.dataTransfer.getData('text/plain')); if (tagId) addSignal(tagId); });
+            document.getElementById('chart-windows').appendChild(box);
+            chartWindows.push({ id, signals: [], chart: null, zoomed: false });
+            selectChartWindow(id);
+        }
+
+        function selectChartWindow(id) {
+            activeWindowId = id;
+            document.querySelectorAll('.chart-window').forEach(box => box.classList.toggle('active', Number(box.dataset.windowId) === id));
+        }
+
+        function removeChartWindow(id) {
+            if (chartWindows.length <= 1) return;
+            const index = chartWindows.findIndex(w => w.id === id);
+            if (index < 0) return;
+            chartWindows[index].chart?.destroy();
+            document.querySelector(`.chart-window[data-window-id="${id}"]`)?.remove();
+            chartWindows.splice(index, 1);
+            if (activeWindowId === id) selectChartWindow(chartWindows[Math.max(0, index - 1)].id);
+        }
+
+        async function addSignal(tagId) {
+            const win = getActiveWindow();
+            if (!win || win.signals.some(s => s.tag.id === tagId)) return;
+            const tag = allTags.find(t => t.id === tagId);
+            if (!tag) return;
+            const res = await fetch(getChartsUrl(tagId));
+            const data = await res.json();
+            if (!data.times || data.times.length === 0) return;
+            win.signals.push({ tag, times: data.times, values: data.values, t_start: data.t_start, t_end: data.t_end });
+            rebuildChartWindow(win);
+        }
+
+        function removeSignal(tagId) {
+            const win = getActiveWindow();
+            if (!win) return;
+            win.signals = win.signals.filter(s => s.tag.id !== tagId);
+            rebuildChartWindow(win);
+        }
+
+        function clearCharts() {
+            const win = getActiveWindow();
+            if (!win) return;
+            win.signals = [];
+            rebuildChartWindow(win);
+        }
+
+        function renderLegend(win, legend) {
+            legend.innerHTML = win.signals.map((s, idx) => {
+                const color = COLORS[idx % COLORS.length];
+                return `<div class="legend-row"><span class="legend-line" style="background-color:${color};"></span><span class="legend-name" style="color:${color};">${s.tag.name}</span><button class="legend-del" onclick="removeSignal(${s.tag.id}); event.stopPropagation();">×</button></div>`;
+            }).join('');
+            legend.style.display = win.signals.length ? 'flex' : 'none';
+        }
+
+        async function reloadCharts(forceFit = false) {
+            for (const win of chartWindows) {
+                if (forceFit) win.zoomed = false;
+                for (const s of win.signals) {
+                    try {
+                        const res = await fetch(getChartsUrl(s.tag.id));
+                        const data = await res.json();
+                        if (data.times && data.times.length > 0) Object.assign(s, { times: data.times, values: data.values, t_start: data.t_start, t_end: data.t_end });
+                    } catch (e) {}
+                }
+                rebuildChartWindow(win, forceFit);
+            }
+        }
+
+        function rebuildChartWindow(win, forceFit = false) {
+            const root = document.querySelector(`.chart-window[data-window-id="${win.id}"]`);
+            const box = root?.querySelector('.chart-box');
+            const legend = root?.querySelector('.chart-legend');
+            if (!box || !legend) return;
+            win.chart?.destroy();
+            box.querySelectorAll('canvas, .uplot').forEach(el => el.remove());
+            renderLegend(win, legend);
+            if (!win.signals.length) return;
+
+            const baseTimes = win.signals[0].times;
+            const data = [baseTimes];
+            const series = [{ label: "Time" }];
+            win.signals.forEach((s, idx) => {
+                series.push({ label: s.tag.name, stroke: COLORS[idx % COLORS.length], width: 2, paths: uPlot.paths.stepped({ align: 1 }) });
+                data.push(s.values);
+            });
+            const tMin = win.signals[0].t_start || baseTimes[0];
+            const tMax = win.signals[0].t_end || baseTimes[baseTimes.length - 1];
+            const opts = {
+                width: box.clientWidth || 1000, height: box.clientHeight || 400,
+                scales: { x: { time: true, min: (!win.zoomed || forceFit) ? tMin : undefined, max: (!win.zoomed || forceFit) ? tMax : undefined } },
+                plugins: [wheelZoomPlugin('charts')],
+                axes: [{ stroke: '#858585', grid: { stroke: '#333337' } }, { stroke: '#858585', grid: { stroke: '#333337' } }],
+                series, cursor: { drag: { x: true, y: false } }
+            };
+            win.chart = new uPlot(opts, data, box);
+            if (win.id === activeWindowId) mainChart = win.chart;
+        }
+
+        // --- BITS LOGIC ---
+        function getBitsUrl(tagId) {
+            let isLive = document.getElementById('bits-mode').value === 'Live';
+            if (isLive) {
+                let span = document.getElementById('bits-span').value;
+                return `/api/points/${tagId}?span=${encodeURIComponent(span)}`;
+            } else {
+                let start = document.getElementById('bits-arch-start').value;
+                let dur = document.getElementById('bits-arch-dur').value;
+                return `/api/archive/${tagId}?start=${encodeURIComponent(start)}&duration=${encodeURIComponent(dur)}`;
+            }
+        }
+
+        async function reloadBits(forceFit = false) {
+            const sel = document.getElementById('bits-signal-select');
+            const tagId = sel.value;
+            if (!tagId) return;
+            if (forceFit) userZoomedBits = false;
+
+            const res = await fetch(getBitsUrl(tagId));
+            const payload = await res.json();
+            const box = document.getElementById('uplot-bits');
+            box.innerHTML = '';
+            if (!payload.times || payload.times.length === 0) return;
+
+            const data = [payload.times];
+            const series = [{ label: "Time" }];
+            const bitColors = [
+                '#FF6384', '#4BC0C0', '#FFCE56', '#36A2EB', '#FF9F40', '#9966FF',
+                '#C9CBCF', '#00E676', '#E91E63', '#00BCD4', '#FF5722', '#8BC34A',
+                '#FFEB3B', '#9C27B0', '#795548', '#607D8B'
+            ];
+
+            for (let b = 0; b < 16; b++) {
+                const labelName = bitNameMap[b] || `Bit ${b}`;
+                series.push({
+                    label: labelName,
+                    stroke: bitColors[b],
+                    width: 1.5,
+                    paths: uPlot.paths.stepped({ align: 1 })
+                });
+                const bitTrack = payload.values.map(v => b + (((Math.floor(v) >> b) & 1) * 0.75));
+                data.push(bitTrack);
+            }
+
+            let tMin = payload.t_start || payload.times[0];
+            let tMax = payload.t_end || payload.times[payload.times.length - 1];
+
+            const opts = {
+                width: box.clientWidth || 1200,
+                height: box.clientHeight || 600,
+                scales: { 
+                    x: { 
+                        time: true,
+                        min: (!userZoomedBits || forceFit) ? tMin : undefined,
+                        max: (!userZoomedBits || forceFit) ? tMax : undefined
+                    },
+                    y: { min: -0.5, max: 16.5 }
+                },
+                plugins: [wheelZoomPlugin('bits')],
+                axes: [
+                    { stroke: "#858585", grid: { stroke: "#333337" } },
+                    { 
+                        stroke: "#858585", 
+                        grid: { stroke: "#333337" },
+                        values: (self, ticks) => ticks.map(t => {
+                            if (Number.isInteger(t) && t >= 0 && t < 16) {
+                                return bitNameMap[t] ? bitNameMap[t] : `Bit ${t}`;
+                            }
+                            return '';
+                        }),
+                        size: 160
+                    }
+                ],
+                series: series,
+                cursor: { drag: { x: true, y: false } }
+            };
+
+            bitsChart = new uPlot(opts, data, box);
+        }
+
+        function resizeChart(chartInstance, containerId) {
+            const box = document.getElementById(containerId);
+            if (chartInstance && box && box.clientWidth > 0 && box.clientHeight > 0) {
+                chartInstance.setSize({ width: box.clientWidth, height: box.clientHeight });
+            }
+        }
+
+        window.addEventListener('resize', () => {
+            if (document.getElementById('page-charts').classList.contains('active') && mainChart) {
+                resizeChart(mainChart, 'uplot-chart');
+            }
+            if (document.getElementById('page-bits').classList.contains('active') && bitsChart) {
+                resizeChart(bitsChart, 'uplot-bits');
+            }
+        });
+
+        // Живой таймер опроса (только для Live и если не на паузе)
+        setInterval(async () => {
+            const isChartsActive = document.getElementById('page-charts').classList.contains('active');
+            const isBitsActive = document.getElementById('page-bits').classList.contains('active');
+
+            // activeSignals был мёртовой переменной: сигналы живут в chartWindows,
+            // поэтому проверка на него навсегда глушила Live-обновление графиков
+            const hasSignals = chartWindows.some(w => w.signals.length > 0);
+            if (isChartsActive && hasSignals && !chartsPaused && document.getElementById('charts-mode').value === 'Live') {
+                reloadCharts(false);
+            }
+
+            if (isBitsActive && !bitsPaused && document.getElementById('bits-mode').value === 'Live') {
+                reloadBits(false);
+            }
+        }, 1000);
+
+        initDateTimeInputs();
+        fetchTags();
+    </script>
+</body>
+</html>
