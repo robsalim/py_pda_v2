@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import uvicorn
 import os
+import sys
 
 from config import WEB_HOST, WEB_PORT
 from database.db_service import DatabaseService
@@ -16,6 +17,18 @@ db_service: Optional[DatabaseService] = None
 # Реестр живых значений DriverManager; когда он есть, актуальные состояния
 # отдаются из памяти, без запроса к истории
 registry = None
+
+
+def _base_dir() -> str:
+    """Каталог ресурсов: для собранного exe — распакованный бандл PyInstaller,
+    для запуска из исходников — папка проекта."""
+    if getattr(sys, "frozen", False):
+        return getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(sys.executable)))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _index_path() -> str:
+    return os.path.join(_base_dir(), "web", "index.html")
 
 def parse_span(text: str) -> timedelta:
     t = str(text).strip()
@@ -29,7 +42,7 @@ def parse_span(text: str) -> timedelta:
 
 @app.get("/")
 async def get_index():
-    return FileResponse("web/index.html")
+    return FileResponse(_index_path())
 
 @app.get("/api/tags")
 async def get_tags():

@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('config.py', '.'), ('db_config.json', '.')],
+    datas=[('config.py', '.'), ('db_config.json', '.'), ('web/index.html', 'web')],
     hiddenimports=[
         'uvicorn.logging',
         'uvicorn.loops',
