@@ -4,7 +4,8 @@ import sys
 import ctypes
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QTabWidget,
-    QTreeWidget, QTreeWidgetItem, QSplitter, QLabel, QPushButton, QScrollArea, QTextBrowser
+    QTreeWidget, QTreeWidgetItem, QSplitter, QLabel, QPushButton, QScrollArea, QTextBrowser,
+    QAbstractItemView,
 )
 from PyQt6.QtCore import Qt, QMimeData
 from PyQt6.QtGui import QDrag
@@ -21,33 +22,69 @@ from ui.chart_widget import ChartWidget
 from ui.bits_widget import BitsWidget
 from ui.db_settings_widget import DatabaseSettingsWidget
 
+
 class DraggableTagTree(QTreeWidget):
+    """Дерево сигналов: мультивыбор (Ctrl/Shift) + drag выделенного на график.
+
+    При перетаскивании передаются id всех выделенных листьев; если среди
+    выделенных есть узел группы/подключения — он разворачивается до тегов.
+    """
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setHeaderHidden(True)
         self.setDragEnabled(True)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
 
-    def startDrag(self, supportedActions):
-        item = self.currentItem()
-        if not item:
-            return
-
+    @staticmethod
+    def _tag_ids_of(item):
+        """Собирает id тегов из листа или из всей ветки (группы/подключения)."""
+        out = []
         tag = item.data(0, Qt.ItemDataRole.UserRole)
         if tag:
-            drag = QDrag(self)
-            mime = QMimeData()
-            mime.setText(str(tag.id))
-            drag.setMimeData(mime)
-            drag.exec(Qt.DropAction.CopyAction)
-            return
+            out.append(tag.id)
+            return out
+        ids = item.data(0, Qt.ItemDataRole.UserRole + 1)   # группа
+        if ids:
+            out.extend(ids)
+            return out
+        for i in range(item.childCount()):                 # подключение
+            out.extend(DraggableTagTree._tag_ids_of(item.child(i)))
+        return out
 
-        tag_ids = item.data(0, Qt.ItemDataRole.UserRole + 1)
-        if tag_ids:
-            drag = QDrag(self)
-            mime = QMimeData()
-            mime.setText(",".join(map(str, tag_ids)))
-            drag.setMimeData(mime)
-            drag.exec(Qt.DropAction.CopyAction)
+    def startDrag(self, supportedActions):
+        items = self.selectedItems() or ([self.currentItem()] if self.currentItem() else [])
+        if not items:
+            return
+        # сохраняем выбранные листья: id могут повторяться между узлами
+        tag_ids = []
+        seen = set()
+        for it in items:
+            for tid in self._tag_ids_of(it):
+                if tid not in seen:
+                    seen.add(tid)
+                    tag_ids.append(tid)
+        if not tag_ids:
+            return
+        drag = QDrag(self)
+        mime = QMimeData()
+        mime.setText(",".join(map(str, tag_ids)))
+        drag.setMimeData(mime)
+        drag.exec(Qt.DropAction.CopyAction)
+
+
+from config import WEB_PORT
+from database.db_service import DatabaseService
+from drivers.driver_manager import DriverManager
+from drivers.registry import driver_type_keys, get_driver_class, get_driver_label
+from ui.io_widget import IOWidget
+from ui.styles import SPIN_BUTTON_QSS
+from ui import theme
+from ui.theme import S
+from ui.chart_widget import ChartWidget
+from ui.bits_widget import BitsWidget
+from ui.db_settings_widget import DatabaseSettingsWidget
+
 
 class MainWindow(QMainWindow):
     def __init__(self, db_service: DatabaseService, driver_manager: DriverManager):

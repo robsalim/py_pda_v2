@@ -106,8 +106,12 @@ def run_web_server(db: DatabaseService, tag_registry=None):
     global db_service, registry
     db_service = db
     registry = tag_registry
+    # use_colors=False обязателен: под pythonw.exe (run.bat) sys.stdout=None,
+    # и uvicorn падает на sys.stdout.isatty() при настройке логгера —
+    # поток веб-сервера умирал молча, без окна консоли.
     # Запускаем без автоматического вызова браузера
-    config = uvicorn.Config(app, host=WEB_HOST, port=WEB_PORT, log_level="warning")
+    config = uvicorn.Config(app, host=WEB_HOST, port=WEB_PORT,
+                            log_level="warning", use_colors=False)
     server = uvicorn.Server(config)
     server.run()
 

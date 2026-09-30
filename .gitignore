@@ -11,6 +11,9 @@ __pycache__/
 data/
 db_config.json
 
+# Экспортированные из GUI списки сигналов (артефакты пользователя)
+*_tags.csv
+
 # Артефакты сборки PyInstaller
 build/
 dist/

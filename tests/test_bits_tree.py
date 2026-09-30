@@ -7,6 +7,7 @@
 import os
 import sys
 import tempfile
+import types
 from datetime import datetime
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -92,9 +93,56 @@ def test_bits_tree_filter_and_tracks():
     w.update_bit_chart(force_fit=True)
 
 
+def test_charts_tree_multiselect_drag():
+    """Регрессия: дерево сигналов на Charts должно давать мультивыбор (Ctrl/Shift)
+    и передавать на график id всех выделенных листьев, а группы — разворачивать
+    в список тегов.
+    """
+    from PyQt6.QtWidgets import QApplication
+    from ui.main_window import DraggableTagTree, QTreeWidgetItem
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    tree = DraggableTagTree()
+
+    # режим мультивыбора включён (без него Ctrl/Shift не работают)
+    from PyQt6.QtWidgets import QAbstractItemView
+    assert tree.selectionMode() == QAbstractItemView.SelectionMode.ExtendedSelection
+
+    conn = QTreeWidgetItem(["C"])
+    grp = QTreeWidgetItem(["G"])
+    leaf_ids = []
+    for i in range(1, 4):
+        it = QTreeWidgetItem([f"t{i}"])
+        # как в реальном дереве: в UserRole лежит объект тега с полем id
+        it.setData(0, Qt.ItemDataRole.UserRole, types.SimpleNamespace(id=i))
+        grp.addChild(it)
+        leaf_ids.append(i)
+    conn.addChild(grp)
+    conn.setData(0, Qt.ItemDataRole.UserRole + 1, leaf_ids)
+    tree.addTopLevelItem(conn)
+
+    # выделяем первый и третий лист (эмуляция Ctrl-кликов)
+    leaves = [grp.child(i) for i in (0, 2)]
+    for it in leaves:
+        it.setSelected(True)
+    assert tree.selectedItems() == leaves
+
+    # drag выделенных -> "1,3" (в исходном порядке, без дублей)
+    ids = []
+    for it in tree.selectedItems():
+        ids.extend(DraggableTagTree._tag_ids_of(it))
+    assert ids == [1, 3], ids
+
+    # drag группы -> все её теги
+    assert DraggableTagTree._tag_ids_of(grp) == [1, 2, 3]
+    # drag подключения -> тоже все теги
+    assert DraggableTagTree._tag_ids_of(conn) == [1, 2, 3]
+
+
 def main():
     test_is_bit_tag()
     test_bits_tree_filter_and_tracks()
+    test_charts_tree_multiselect_drag()
     print("BITS TREE TESTS PASSED")
 
 
