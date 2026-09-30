@@ -7,17 +7,43 @@
     <link rel="stylesheet" href="https://unpkg.com/uplot@1.6.30/dist/uPlot.min.css">
     <script src="https://unpkg.com/uplot@1.6.30/dist/uPlot.iife.min.js"></script>
     <style>
-        body { margin: 0; padding: 0; background-color: #1E1E1E; color: #D8D8D8; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
-        header { background: #252526; border-bottom: 1px solid #3F3F46; display: flex; align-items: center; padding: 0 16px; height: 44px; justify-content: space-between; }
+        /* Токены темы: dark по умолчанию, light переопределяется на body.light */
+        :root {
+            --bg: #1E1E1E; --panel: #252526; --input: #2D2D30; --hover: #3E3E42;
+            --border: #3F3F46; --border-mut: #333337; --border-input: #55555A;
+            --text: #D8D8D8; --text-strong: #FFFFFF; --text-dim: #A0A0A0; --text-faint: #858585;
+            --plot-bg: #181818; --axis: #858585; --grid: #333337;
+            --x1: #FFD700; --x2: #00E5FF; --dt: #00E676;
+            --accent: #007ACC; --btn-load: #0E639C; --btn-load-hover: #1177BB;
+            --legend-bg: rgba(28, 28, 28, 0.70); --legend-border: rgba(130, 130, 130, 0.30);
+            --chip-x: #C8C8C8; --danger-btn: #7A4B50; --danger-btn-border: #956168;
+            --active-window-border: #647C8C;
+        }
+        body.light {
+            --bg: #F3F3F3; --panel: #EAEAEA; --input: #FFFFFF; --hover: #DADEE4;
+            --border: #D0D3D8; --border-mut: #E0E3E7; --border-input: #B9BCC2;
+            --text: #3A3A3A; --text-strong: #1F1F1F; --text-dim: #5C5C5C; --text-faint: #8A8F98;
+            --plot-bg: #FFFFFF; --axis: #9AA0A6; --grid: #E0E3E7;
+            --x1: #8A6D00; --x2: #0077A0; --dt: #1B7F3B;
+            --accent: #0063B1; --btn-load: #0063B1; --btn-load-hover: #0078D4;
+            --legend-bg: rgba(255, 255, 255, 0.85); --legend-border: rgba(154, 160, 166, 0.55);
+            --chip-x: #5A5A5A; --danger-btn: #C25E66; --danger-btn-border: #A34F57;
+            --active-window-border: #0078D4;
+        }
+        body { margin: 0; padding: 0; background-color: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+        header { background: var(--panel); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 16px; height: 44px; justify-content: space-between; }
         .nav-left { display: flex; align-items: center; gap: 12px; }
-        .logo { font-weight: bold; font-size: 15px; color: #FFFFFF; margin-right: 16px; }
-        .tab-btn { background: none; border: none; color: #A0A0A0; font-size: 13px; font-weight: bold; padding: 12px 18px; cursor: pointer; border-bottom: 2px solid transparent; }
-        .tab-btn.active { color: #FFFFFF; border-bottom: 2px solid #007ACC; background: #2D2D30; }
-        
-        .cursor-info { display: flex; align-items: center; gap: 14px; background: #1E1E1E; padding: 4px 12px; border-radius: 4px; border: 1px solid #333337; font-size: 12px; font-weight: bold; }
-        .c-x1 { color: #FFD700; }
-        .c-x2 { color: #00E5FF; }
-        .c-dt { color: #00E676; }
+        .logo { font-weight: bold; font-size: 15px; color: var(--text-strong); margin-right: 16px; }
+        .tab-btn { background: none; border: none; color: var(--text-dim); font-size: 13px; font-weight: bold; padding: 12px 18px; cursor: pointer; border-bottom: 2px solid transparent; }
+        .tab-btn.active { color: var(--text-strong); border-bottom: 2px solid var(--accent); background: var(--input); }
+        .nav-right { display: flex; align-items: center; gap: 14px; }
+        .theme-btn { background: var(--input); border: 1px solid var(--border-input); color: var(--text); font-size: 12px; font-weight: bold; padding: 6px 12px; border-radius: 4px; cursor: pointer; }
+        .theme-btn:hover { background: var(--hover); border-color: var(--accent); }
+
+        .cursor-info { display: flex; align-items: center; gap: 14px; background: var(--bg); padding: 4px 12px; border-radius: 4px; border: 1px solid var(--border-mut); font-size: 12px; font-weight: bold; }
+        .c-x1 { color: var(--x1); }
+        .c-x2 { color: var(--x2); }
+        .c-dt { color: var(--dt); }
 
         .content { flex: 1; position: relative; overflow: hidden; }
         .tab-page { display: none !important; width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
@@ -25,32 +51,33 @@
 
         /* Вкладка Charts */
         #page-charts { flex-direction: row; }
-        .sidebar { width: 250px; background: #252526; border-right: 1px solid #3F3F46; display: flex; flex-direction: column; }
-        .sidebar-title { padding: 10px 12px; font-size: 11px; font-weight: bold; color: #858585; border-bottom: 1px solid #333337; text-transform: uppercase; }
+        .sidebar { width: 250px; background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+        .sidebar-title { padding: 10px 12px; font-size: 11px; font-weight: bold; color: var(--text-faint); border-bottom: 1px solid var(--border-mut); text-transform: uppercase; }
         .tag-list { flex: 1; overflow-y: auto; list-style: none; margin: 0; padding: 0; }
-        .tag-item { padding: 8px 12px; font-size: 13px; cursor: pointer; display: flex; justify-content: space-between; border-bottom: 1px solid #2D2D30; user-select: none; }
-        .tag-item:hover { background: #2A2D2E; color: #FFFFFF; }
-        
+        .tag-item { padding: 8px 12px; font-size: 13px; cursor: pointer; display: flex; justify-content: space-between; border-bottom: 1px solid var(--bg); user-select: none; }
+        .tag-item:hover { background: var(--hover); color: var(--text-strong); }
+
         .chart-area { flex: 1; display: flex; flex-direction: column; padding: 8px; box-sizing: border-box; gap: 8px; overflow: hidden; }
         .windows-toolbar { display: flex; align-items: center; gap: 8px; }
         .chart-windows { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
-        .chart-window { min-height: 260px; height: 420px; flex: 0 0 auto; position: relative; background: #181818; border: 1px solid #3F3F46; border-radius: 4px; overflow: hidden; }
-        .chart-window.active { border-color: #647C8C; }
-        .window-close { position: absolute; z-index: 10; top: 6px; right: 6px; width: 22px; height: 22px; padding: 0; background: #7A4B50; border-color: #956168; }
-        .controls-bar { display: flex; align-items: center; gap: 10px; background: #252526; padding: 6px 12px; border-radius: 4px; border: 1px solid #3F3F46; font-size: 12px; }
+        .chart-window { min-height: 260px; height: 420px; flex: 0 0 auto; position: relative; background: var(--plot-bg); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+        .chart-window.active { border-color: var(--active-window-border); }
+        .chart-window.drop-target { border-color: var(--accent); }
+        .window-close { position: absolute; z-index: 10; top: 6px; right: 6px; width: 22px; height: 22px; padding: 0; background: var(--danger-btn); border-color: var(--danger-btn-border); }
+        .controls-bar { display: flex; align-items: center; gap: 10px; background: var(--panel); padding: 6px 12px; border-radius: 4px; border: 1px solid var(--border); font-size: 12px; }
         .chips-container { display: none; }
-        .chart-legend { position: absolute; z-index: 5; top: 12px; left: 12px; display: flex; flex-direction: column; gap: 3px; padding: 5px 8px; background: rgba(28, 28, 28, 0.70); border: 1px solid rgba(130, 130, 130, 0.30); border-radius: 4px; }
+        .chart-legend { position: absolute; z-index: 5; top: 12px; left: 12px; display: flex; flex-direction: column; gap: 3px; padding: 5px 8px; background: var(--legend-bg); border: 1px solid var(--legend-border); border-radius: 4px; }
         .legend-row { display: flex; align-items: center; gap: 6px; min-height: 18px; }
         .legend-line { width: 38px; height: 3px; flex: 0 0 38px; }
         .legend-name { font-size: 12px; font-weight: normal; white-space: nowrap; }
-        .legend-del { width: 18px; height: 18px; margin-left: 6px; padding: 0; border: none; background: transparent; color: #C8C8C8; font-size: 14px; line-height: 16px; font-weight: normal; }
-        .legend-del:hover { color: #FFFFFF; background: transparent; border: none; }
-        
-        select, input[type="datetime-local"], button { background: #2D2D30; border: 1px solid #55555A; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; cursor: pointer; }
-        button:hover { background: #3E3E42; border-color: #007ACC; }
-        .btn-load { background: #0E639C !important; font-weight: bold; }
-        .btn-load:hover { background: #1177BB !important; }
-        .chart-box { flex: 1; width: 100%; height: 100%; background: #181818; border: 1px solid #3F3F46; border-radius: 4px; position: relative; overflow: hidden; }
+        .legend-del { width: 18px; height: 18px; margin-left: 6px; padding: 0; border: none; background: transparent; color: var(--chip-x); font-size: 14px; line-height: 16px; font-weight: normal; }
+        .legend-del:hover { color: var(--text-strong); background: transparent; border: none; }
+
+        select, input[type="datetime-local"], button { background: var(--input); border: 1px solid var(--border-input); color: var(--text-strong); padding: 4px 8px; border-radius: 4px; font-size: 12px; cursor: pointer; }
+        button:hover { background: var(--hover); border-color: var(--accent); }
+        .btn-load { background: var(--btn-load) !important; font-weight: bold; color: #FFFFFF; border: none; }
+        .btn-load:hover { background: var(--btn-load-hover) !important; }
+        .chart-box { flex: 1; width: 100%; height: 100%; background: var(--plot-bg); border: 1px solid var(--border); border-radius: 4px; position: relative; overflow: hidden; }
 
         /* Вкладка Bits */
         #page-bits { flex-direction: column; padding: 8px; box-sizing: border-box; gap: 8px; width: 100%; height: 100%; }
@@ -63,10 +90,13 @@
             <button id="btn-tab-charts" class="tab-btn active" onclick="switchTab('charts')">Charts</button>
             <button id="btn-tab-bits" class="tab-btn" onclick="switchTab('bits')">Bits</button>
         </div>
-        <div class="cursor-info">
-            <span class="c-x1" id="lbl-x1">X1: —</span>
-            <span class="c-x2" id="lbl-x2">X2: —</span>
-            <span class="c-dt" id="lbl-dt">ΔT: —</span>
+        <div class="nav-right">
+            <div class="cursor-info">
+                <span class="c-x1" id="lbl-x1">X1: —</span>
+                <span class="c-x2" id="lbl-x2">X2: —</span>
+                <span class="c-dt" id="lbl-dt">ΔT: —</span>
+            </div>
+            <button id="btn-theme" class="theme-btn" onclick="toggleTheme()">🌙 Тёмная</button>
         </div>
     </header>
 
@@ -76,7 +106,7 @@
             <div class="sidebar">
                 <div class="sidebar-title">Сигналы в базе (клик)</div>
                 <ul class="tag-list" id="sidebar-tags">
-                    <li style="padding: 12px; color: #858585;">Загрузка тегов...</li>
+                    <li style="padding: 12px; color: var(--text-faint);">Загрузка тегов...</li>
                 </ul>
             </div>
             <div class="chart-area">
@@ -196,6 +226,39 @@
 
         const COLORS = ['#667EEA', '#FF6384', '#4BC0C0', '#FF9F40', '#9966FF', '#FFCD56', '#00E676', '#E91E63'];
 
+        // --- ТЕМА: цвета берутся из CSS-переменных body ---
+        function cssVar(name) {
+            return getComputedStyle(document.body).getPropertyValue(name).trim();
+        }
+        function themeColors() {
+            return {
+                axis: cssVar('--axis'),
+                grid: cssVar('--grid'),
+                plotBg: cssVar('--plot-bg'),
+                text: cssVar('--text'),
+                x1: cssVar('--x1'),
+                x2: cssVar('--x2'),
+            };
+        }
+        function applyInitialTheme() {
+            let saved = localStorage.getItem('pda_web_theme');
+            if (saved === 'light') document.body.classList.add('light');
+            updateThemeButton();
+        }
+        function updateThemeButton() {
+            const light = document.body.classList.contains('light');
+            document.getElementById('btn-theme').innerText = light ? '🌙 Тёмная' : '☀️ Светлая';
+        }
+        function toggleTheme() {
+            const light = document.body.classList.toggle('light');
+            localStorage.setItem('pda_web_theme', light ? 'light' : 'dark');
+            updateThemeButton();
+            // uPlot кэширует цвета осей/сетки в opts — пересобираем графики
+            chartWindows.forEach(w => rebuildChartWindow(w, false));
+            if (bitsChart) reloadBits(false);
+            updateCursorPanel();
+        }
+
         function initDateTimeInputs() {
             let now = new Date();
             let past = new Date(now.getTime() - 24 * 3600 * 1000);
@@ -299,14 +362,15 @@
                         if (cursorX1 != null) {
                             let xPos = u.valToPos(cursorX1, "x", true);
                             if (xPos >= u.bbox.left && xPos <= u.bbox.left + u.bbox.width) {
-                                ctx.strokeStyle = "#FFD700";
+                                const tc = themeColors();
+                                ctx.strokeStyle = tc.x1;
                                 ctx.lineWidth = 2;
                                 ctx.setLineDash([5, 4]);
                                 ctx.beginPath();
                                 ctx.moveTo(xPos, top);
                                 ctx.lineTo(xPos, top + height);
                                 ctx.stroke();
-                                ctx.fillStyle = "#FFD700";
+                                ctx.fillStyle = tc.x1;
                                 ctx.font = "bold 11px sans-serif";
                                 ctx.fillText("X1", xPos + 4, top + 14);
                             }
@@ -315,14 +379,15 @@
                         if (cursorX2 != null) {
                             let xPos = u.valToPos(cursorX2, "x", true);
                             if (xPos >= u.bbox.left && xPos <= u.bbox.left + u.bbox.width) {
-                                ctx.strokeStyle = "#00E5FF";
+                                const tc = themeColors();
+                                ctx.strokeStyle = tc.x2;
                                 ctx.lineWidth = 2;
                                 ctx.setLineDash([5, 4]);
                                 ctx.beginPath();
                                 ctx.moveTo(xPos, top);
                                 ctx.lineTo(xPos, top + height);
                                 ctx.stroke();
-                                ctx.fillStyle = "#00E5FF";
+                                ctx.fillStyle = tc.x2;
                                 ctx.font = "bold 11px sans-serif";
                                 ctx.fillText("X2", xPos + 4, top + 14);
                             }
@@ -405,7 +470,7 @@
             list.innerHTML = allTags.map(t => `
                 <li class="tag-item" draggable="true" ondragstart="dragSignal(event, ${t.id})" onclick="addSignal(${t.id})">
                     <span>${t.name}</span>
-                    <span style="color:#858585; font-size: 11px;">${t.unit || ''}</span>
+                    <span style="color:var(--text-faint); font-size: 11px;">${t.unit || ''}</span>
                 </li>
             `).join('');
         }
@@ -536,11 +601,12 @@
             });
             const tMin = win.signals[0].t_start || baseTimes[0];
             const tMax = win.signals[0].t_end || baseTimes[baseTimes.length - 1];
+            const tc = themeColors();
             const opts = {
                 width: box.clientWidth || 1000, height: box.clientHeight || 400,
                 scales: { x: { time: true, min: (!win.zoomed || forceFit) ? tMin : undefined, max: (!win.zoomed || forceFit) ? tMax : undefined } },
                 plugins: [wheelZoomPlugin('charts')],
-                axes: [{ stroke: '#858585', grid: { stroke: '#333337' } }, { stroke: '#858585', grid: { stroke: '#333337' } }],
+                axes: [{ stroke: tc.axis, grid: { stroke: tc.grid } }, { stroke: tc.axis, grid: { stroke: tc.grid } }],
                 series, cursor: { drag: { x: true, y: false } }
             };
             win.chart = new uPlot(opts, data, box);
@@ -595,6 +661,7 @@
             let tMin = payload.t_start || payload.times[0];
             let tMax = payload.t_end || payload.times[payload.times.length - 1];
 
+            const tc = themeColors();
             const opts = {
                 width: box.clientWidth || 1200,
                 height: box.clientHeight || 600,
@@ -608,10 +675,10 @@
                 },
                 plugins: [wheelZoomPlugin('bits')],
                 axes: [
-                    { stroke: "#858585", grid: { stroke: "#333337" } },
+                    { stroke: tc.axis, grid: { stroke: tc.grid } },
                     { 
-                        stroke: "#858585", 
-                        grid: { stroke: "#333337" },
+                        stroke: tc.axis, 
+                        grid: { stroke: tc.grid },
                         values: (self, ticks) => ticks.map(t => {
                             if (Number.isInteger(t) && t >= 0 && t < 16) {
                                 return bitNameMap[t] ? bitNameMap[t] : `Bit ${t}`;
@@ -661,6 +728,7 @@
             }
         }, 1000);
 
+        applyInitialTheme();
         initDateTimeInputs();
         fetchTags();
     </script>

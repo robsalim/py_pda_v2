@@ -15,6 +15,8 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import QColor
 
+from ui import theme
+
 COL_ID, COL_NAME, COL_GROUP, COL_ADDR, COL_TYPE, COL_SCALE, COL_OFFSET, \
     COL_UNIT, COL_VALUE, COL_TIME = range(10)
 
@@ -96,11 +98,12 @@ class TagTableModel(QAbstractTableModel):
             return self._format(raw, c)
 
         if role == Qt.ItemDataRole.ForegroundRole and c == COL_VALUE:
+            p = theme.current()
             if val is None or qual == _QUALITY_BAD:
-                return QColor("#E08A8A")
-            return QColor("#9CDC9C")
+                return QColor(p.error)
+            return QColor(p.value_good)
         if role == Qt.ItemDataRole.BackgroundRole and t.id in self.favorites:
-            return QColor(63, 89, 107, 90)
+            return QColor(theme.current().favorite_bg)
         if role == Qt.ItemDataRole.ToolTipRole:
             return f"{t.name} [{t.address_str}] {t.unit or ''}".strip()
         return None
@@ -175,6 +178,26 @@ class TagTableModel(QAbstractTableModel):
                 left = self.index(row, COL_VALUE)
                 right = self.index(row, COL_TIME)
                 self.dataChanged.emit(left, right)
+
+    def apply_time_refresh(self, entries: Dict[int, Tuple]):
+        """
+        Освежает (ts, val, quality) только для видимых строк при каждом опросе.
+        В отличие от apply_updates() НЕ помечает тег «изменившимся» (_recent):
+        сигнал мог остаться прежним, но время последнего чтения должно тикать.
+        """
+        if not entries:
+            return
+        touched = []
+        for tid, entry in entries.items():
+            old = self._live.get(tid)
+            if old == entry:
+                continue
+            self._live[tid] = entry
+            row = self._row_of.get(tid)
+            if row is not None:
+                touched.append(row)
+        for row in touched:
+            self.dataChanged.emit(self.index(row, COL_VALUE), self.index(row, COL_TIME))
 
     def prune_recent(self) -> bool:
         """Убирает теги из «недавно изменившихся» по истечении окна."""

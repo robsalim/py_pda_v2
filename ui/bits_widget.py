@@ -10,6 +10,8 @@ import numpy as np
 
 from database.db_service import DatabaseService
 from ui.chart_widget import DateAxisItem, make_step_curve
+from ui import theme
+from ui.theme import S
 
 class BitsWidget(QWidget):
     def __init__(self, db_service: DatabaseService, parent=None):
@@ -42,74 +44,89 @@ class BitsWidget(QWidget):
             if b not in self.bit_names:
                 self.bit_names[b] = f"Bit {b}"
 
+    def refresh_tags(self):
+        """
+        Перечитать список сигналов после изменений на вкладке I/O.
+        Вызывается по сигналу IOWidget.tags_changed — иначе новый тег
+        появляется в дереве I/O, но в выпадающем списке Bits его нет.
+        """
+        self._load_bit_names()
+        ticks = [[(i, self.bit_names.get(i, f"Bit {i}")) for i in range(16)]]
+        self.plot_widget.getAxis('left').setTicks(ticks)
+
+        keep = self.combo_signal.currentData()
+        self._reload_signals()
+        if keep is not None:
+            idx = self.combo_signal.findData(keep)
+            if idx >= 0:
+                self.combo_signal.blockSignals(True)
+                self.combo_signal.setCurrentIndex(idx)
+                self.combo_signal.blockSignals(False)
+        # список мог стать пустым (все теги удалены) — снять с графика
+        self.update_bit_chart(force_fit=True)
+
     def _init_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
 
-        label_style = "color: #FFFFFF; font-weight: bold; font-size: 12px;"
-        combo_style = """
-            QComboBox { background-color: #2D2D30; color: #FFFFFF; border: 1px solid #55555A; border-radius: 4px; padding: 4px 8px; font-size: 12px; }
-            QComboBox::drop-down { border: none; }
-            QComboBox QAbstractItemView { background-color: #252526; color: #FFFFFF; selection-background-color: #007ACC; selection-color: #FFFFFF; }
-        """
-        btn_style = """
-            QPushButton { background-color: #49657A; color: #FFFFFF; border: 1px solid #55555A; border-radius: 4px; padding: 4px 10px; font-size: 12px; font-weight: bold; }
-            QPushButton:hover { background-color: #5A778D; border-color: #718A99; }
-        """
+        label_style = f"color: {S('text')}; font-weight: bold; font-size: 12px;"
+        combo_style = theme.COMBO_QSS
+        btn_style = theme.ACTION_BTN_QSS
 
         header1 = QHBoxLayout()
         lbl_sig = QLabel("Сигнал:")
-        lbl_sig.setStyleSheet(label_style)
+        theme.themed(lbl_sig, label_style)
         header1.addWidget(lbl_sig)
 
         self.combo_signal = QComboBox()
-        self.combo_signal.setStyleSheet(combo_style)
+        theme.themed(self.combo_signal, combo_style)
         self._reload_signals()
         self.combo_signal.currentIndexChanged.connect(lambda: self.update_bit_chart(force_fit=True))
         header1.addWidget(self.combo_signal)
 
         header1.addSpacing(10)
         lbl_m = QLabel("Режим:")
-        lbl_m.setStyleSheet(label_style)
+        theme.themed(lbl_m, label_style)
         header1.addWidget(lbl_m)
 
         self.combo_mode = QComboBox()
-        self.combo_mode.setStyleSheet(combo_style)
+        theme.themed(self.combo_mode, combo_style)
         self.combo_mode.addItems(["Live", "Archive"])
         self.combo_mode.currentTextChanged.connect(self._on_mode_changed)
         header1.addWidget(self.combo_mode)
 
         self.btn_pause = QPushButton("⏸ Пауза")
-        self.btn_pause.setStyleSheet(btn_style)
+        self._pause_tpl = btn_style
+        self._restyle_pause = theme.themed(self.btn_pause, lambda p: theme.fill(self._pause_tpl, p))
         self.btn_pause.clicked.connect(self._toggle_pause)
         header1.addWidget(self.btn_pause)
 
         header1.addSpacing(14)
         self.lbl_x1 = QLabel("X1: —")
-        self.lbl_x1.setStyleSheet("color: #FFD700; font-weight: bold; font-size: 12px;")
+        theme.themed(self.lbl_x1, f"color: {S('cursor_x1')}; font-weight: bold; font-size: 12px;")
         header1.addWidget(self.lbl_x1)
 
         self.lbl_x2 = QLabel("X2: —")
-        self.lbl_x2.setStyleSheet("color: #00E5FF; font-weight: bold; font-size: 12px;")
+        theme.themed(self.lbl_x2, f"color: {S('cursor_x2')}; font-weight: bold; font-size: 12px;")
         header1.addWidget(self.lbl_x2)
 
         self.lbl_dt = QLabel("ΔT: —")
-        self.lbl_dt.setStyleSheet("color: #00E676; font-weight: bold; font-size: 12px;")
+        theme.themed(self.lbl_dt, f"color: {S('cursor_dt')}; font-weight: bold; font-size: 12px;")
         header1.addWidget(self.lbl_dt)
         header1.addStretch()
 
         self.btn_reset_zoom = QPushButton("🔍 100%")
-        self.btn_reset_zoom.setStyleSheet(btn_style)
+        theme.themed(self.btn_reset_zoom, btn_style)
         self.btn_reset_zoom.clicked.connect(self._reset_zoom)
         header1.addWidget(self.btn_reset_zoom)
         layout.addLayout(header1)
 
         self.header2 = QHBoxLayout()
         self.lbl_span = QLabel("Окно Live:")
-        self.lbl_span.setStyleSheet(label_style)
+        theme.themed(self.lbl_span, label_style)
         self.combo_span = QComboBox()
-        self.combo_span.setStyleSheet(combo_style)
+        theme.themed(self.combo_span, combo_style)
         self.combo_span.addItems(["15 мин", "1 час", "4 часа", "12 часов", "24 часа", "72 часа"])
         self.combo_span.setCurrentText("24 часа")
         self.combo_span.currentTextChanged.connect(lambda: self.update_bit_chart(force_fit=True))
@@ -117,36 +134,30 @@ class BitsWidget(QWidget):
         self.header2.addWidget(self.combo_span)
 
         self.lbl_arch_start = QLabel("Начало:")
-        self.lbl_arch_start.setStyleSheet(label_style)
+        theme.themed(self.lbl_arch_start, label_style)
         self.dt_start = QDateTimeEdit()
-        self.dt_start.setStyleSheet("""
-            QDateTimeEdit { background-color: #2D2D30; color: #FFFFFF; border: 1px solid #55555A; border-radius: 4px; padding: 4px 6px; font-size: 12px; }
-            QCalendarWidget QWidget { background-color: #252526; color: #FFFFFF; }
-        """)
+        theme.themed(self.dt_start, theme.DTEDIT_QSS)
         self.dt_start.setDisplayFormat("dd.MM.yyyy HH:mm:ss")
         self.dt_start.setCalendarPopup(True)
         self.dt_start.setDateTime(QDateTime.currentDateTime().addSecs(-86400))
 
         self.lbl_arch_dur = QLabel("Длительность:")
-        self.lbl_arch_dur.setStyleSheet(label_style)
+        theme.themed(self.lbl_arch_dur, label_style)
         self.combo_duration = QComboBox()
-        self.combo_duration.setStyleSheet(combo_style)
+        theme.themed(self.combo_duration, combo_style)
         self.combo_duration.addItems(["15 мин", "1 час", "4 часа", "12 часов", "24 часа", "72 часа"])
         self.combo_duration.setCurrentText("24 часа")
 
         self.btn_nav_prev = QPushButton("◀")
-        self.btn_nav_prev.setStyleSheet(btn_style)
+        theme.themed(self.btn_nav_prev, btn_style)
         self.btn_nav_prev.clicked.connect(lambda: self._shift_archive_window(-1))
 
         self.btn_nav_next = QPushButton("▶")
-        self.btn_nav_next.setStyleSheet(btn_style)
+        theme.themed(self.btn_nav_next, btn_style)
         self.btn_nav_next.clicked.connect(lambda: self._shift_archive_window(1))
 
         self.btn_load_archive = QPushButton("📥 Загрузить архив")
-        self.btn_load_archive.setStyleSheet("""
-            QPushButton { background-color: #49657A; color: #FFFFFF; font-weight: bold; border-radius: 4px; padding: 5px 14px; font-size: 12px; border: 1px solid #5A778D; }
-            QPushButton:hover { background-color: #5A778D; }
-        """)
+        theme.themed(self.btn_load_archive, theme.LOAD_BTN_QSS)
         self.btn_load_archive.clicked.connect(lambda: self.update_bit_chart(force_fit=True))
 
         for w in [self.lbl_arch_start, self.dt_start, self.lbl_arch_dur, self.combo_duration,
@@ -158,12 +169,8 @@ class BitsWidget(QWidget):
         layout.addLayout(self.header2)
 
         self.date_axis = DateAxisItem(orientation='bottom')
-        self.date_axis.setPen(pg.mkPen(color='#858585', width=1))
-        self.date_axis.setTextPen(pg.mkPen(color='#D8D8D8'))
 
         self.plot_widget = pg.PlotWidget(axisItems={'bottom': self.date_axis})
-        self.plot_widget.setBackground('#181818')
-        self.plot_widget.showGrid(x=True, y=True, alpha=0.35)
         self.plot_widget.setMouseEnabled(x=True, y=False)
         self.plot_widget.enableAutoRange(axis='y')
         self.plot_widget.setLimits(yMin=-0.5, yMax=16.5)
@@ -179,19 +186,13 @@ class BitsWidget(QWidget):
         ticks = [[(i, self.bit_names.get(i, f"Bit {i}")) for i in range(16)]]
         y_ax = self.plot_widget.getAxis('left')
         y_ax.setTicks(ticks)
-        y_ax.setPen(pg.mkPen(color='#858585', width=1))
-        y_ax.setTextPen(pg.mkPen(color='#D8D8D8'))
 
         self.cursor_x1 = pg.InfiniteLine(
             angle=90, movable=True,
-            pen=pg.mkPen('#FFD700', width=1.8, style=Qt.PenStyle.DashLine),
-            hoverPen=pg.mkPen('#FFE600', width=2.5)
-        )
+            pen=pg.mkPen('k', width=1.8, style=Qt.PenStyle.DashLine))
         self.cursor_x2 = pg.InfiniteLine(
             angle=90, movable=True,
-            pen=pg.mkPen('#00E5FF', width=1.8, style=Qt.PenStyle.DashLine),
-            hoverPen=pg.mkPen('#80F3FF', width=2.5)
-        )
+            pen=pg.mkPen('k', width=1.8, style=Qt.PenStyle.DashLine))
         self.cursor_x1.sigPositionChanged.connect(self._update_cursor_labels)
         self.cursor_x2.sigPositionChanged.connect(self._update_cursor_labels)
         self.cursor_x1.setZValue(100)
@@ -200,6 +201,9 @@ class BitsWidget(QWidget):
         self.plot_widget.addItem(self.cursor_x1, ignoreBounds=True)
         self.plot_widget.addItem(self.cursor_x2, ignoreBounds=True)
 
+        # Цвета pyqtgraph из палитры, перекрашиваются при смене темы
+        theme.on_theme(self._apply_plot_theme)
+        self._apply_plot_theme(theme.current())
 
         self.curves = []
         colors = [
@@ -212,6 +216,22 @@ class BitsWidget(QWidget):
             self.curves.append(c)
 
         layout.addWidget(self.plot_widget)
+
+    def _apply_plot_theme(self, p):
+        """Перекрашивает фон, оси и курсоры бит-графика под палитру p."""
+        self.plot_widget.setBackground(p.plot_bg)
+        self.plot_widget.showGrid(x=True, y=True, alpha=p.grid_alpha)
+        axis_pen = pg.mkPen(color=p.plot_axis, width=1)
+        text_pen = pg.mkPen(color=p.plot_text)
+        self.date_axis.setPen(axis_pen)
+        self.date_axis.setTextPen(text_pen)
+        left_axis = self.plot_widget.getAxis('left')
+        left_axis.setPen(axis_pen)
+        left_axis.setTextPen(text_pen)
+        self.cursor_x1.setPen(pg.mkPen(p.cursor_x1, width=1.8, style=Qt.PenStyle.DashLine))
+        self.cursor_x1.setHoverPen(pg.mkPen(p.cursor_x1_hover, width=2.5))
+        self.cursor_x2.setPen(pg.mkPen(p.cursor_x2, width=1.8, style=Qt.PenStyle.DashLine))
+        self.cursor_x2.setHoverPen(pg.mkPen(p.cursor_x2_hover, width=2.5))
 
     def _parse_span_text(self, text: str) -> timedelta:
         t = str(text).strip()
@@ -305,10 +325,12 @@ class BitsWidget(QWidget):
         self.is_paused = not self.is_paused
         if self.is_paused:
             self.btn_pause.setText("▶ Продолжить")
-            self.btn_pause.setStyleSheet("background-color: #466653; color: white; font-weight: bold; border-radius: 4px; padding: 4px 10px;")
+            self._pause_tpl = theme.btn_qss("add")
         else:
             self.btn_pause.setText("⏸ Пауза")
-            self.btn_pause.setStyleSheet("background-color: #49657A; color: white; font-weight: bold; border-radius: 4px; padding: 4px 10px;")
+            self._pause_tpl = theme.ACTION_BTN_QSS
+        self._restyle_pause()
+        if not self.is_paused:
             self.update_bit_chart()
 
     def _on_tick(self):

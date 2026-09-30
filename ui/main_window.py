@@ -3,7 +3,7 @@ import html
 import sys
 import ctypes
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QTabWidget,
+    QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QTabWidget,
     QTreeWidget, QTreeWidgetItem, QSplitter, QLabel, QPushButton, QScrollArea, QTextBrowser
 )
 from PyQt6.QtCore import Qt, QMimeData
@@ -14,6 +14,9 @@ from database.db_service import DatabaseService
 from drivers.driver_manager import DriverManager
 from drivers.registry import driver_type_keys, get_driver_class, get_driver_label
 from ui.io_widget import IOWidget
+from ui.styles import SPIN_BUTTON_QSS
+from ui import theme
+from ui.theme import S
 from ui.chart_widget import ChartWidget
 from ui.bits_widget import BitsWidget
 from ui.db_settings_widget import DatabaseSettingsWidget
@@ -51,153 +54,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("PDA Next-Gen (Python Edition)")
         self.resize(1450, 850)
-        self._apply_dark_title_bar()
+        theme.register_title_window(self)
 
-        self.setStyleSheet("""
-        /* Базовые цвета для всех окон и виджетов */
-                    QMainWindow, QWidget {
-                        background-color: #1E1E1E;
-                        color: #D4D4D4;
-                        font-family: 'Segoe UI', Tahoma, sans-serif;
-                        font-size: 12px;
-                    }
-        
-                    /* Вкладки */
-                    QTabWidget::pane {
-                        border: 1px solid #3F3F46;
-                        background-color: #1E1E1E;
-                    }
-                    QTabBar::tab {
-                        background: #252526;
-                        color: #A0A0A0;
-                        padding: 8px 20px;
-                        font-weight: bold;
-                        border-top-left-radius: 4px;
-                        border-top-right-radius: 4px;
-                        border: 1px solid #2D2D30;
-                        margin-right: 2px;
-                    }
-                    QTabBar::tab:selected {
-                        background: #1E1E1E;
-                        color: #FFFFFF;
-                        border-top: 2px solid #007ACC;
-                        border-bottom: none;
-                    }
-        
-                    /* Деревья (QTreeWidget) */
-                    QTreeWidget {
-                        background-color: #252526;
-                        color: #FFFFFF;
-                        border: 1px solid #3F3F46;
-                        outline: none;
-                    }
-                    QTreeWidget::item:hover {
-                        background-color: #2D2D30;
-                    }
-                    QTreeWidget::item:selected {
-                        background-color: #007ACC;
-                        color: #FFFFFF;
-                    }
-        
-                    /* Таблицы (QTableWidget) и заголовок */
-                    QTableWidget {
-                        background-color: #1E1E1E;
-                        color: #FFFFFF;
-                        gridline-color: #2D2D30;
-                        border: 1px solid #3F3F46;
-                        selection-background-color: #007ACC;
-                        outline: none;
-                    }
-                    QHeaderView::section {
-                        background-color: #252526;
-                        color: #E0E0E0;
-                        font-weight: bold;
-                        border: 1px solid #3F3F46;
-                        padding: 5px;
-                    }
-                    /* Левый верхний угол таблицы над номерами строк */
-                    QTableCornerButton::section {
-                        background-color: #252526;
-                        border: 1px solid #3F3F46;
-                    }
-        
-                    /* Поля ввода и выпадающие списки */
-                    QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
-                        background-color: #2D2D30;
-                        color: #FFFFFF;
-                        border: 1px solid #55555A;
-                        border-radius: 4px;
-                        padding: 4px 6px;
-                    }
-                    QComboBox::drop-down {
-                        border: none;
-                    }
-                    QComboBox QAbstractItemView {
-                        background-color: #252526;
-                        color: #FFFFFF;
-                        selection-background-color: #007ACC;
-                        border: 1px solid #3F3F46;
-                    }
-        
-                    /* Разделитель (Splitter) */
-                    QSplitter::handle {
-                        background-color: #2D2D30;
-                    }
-                    QSplitter::handle:hover {
-                        background-color: #007ACC;
-                    }
-        
-                    /* Тёмные полосы прокрутки (Scrollbars) */
-                    QScrollBar:vertical {
-                        border: none;
-                        background-color: #1E1E1E;
-                        width: 10px;
-                        margin: 0px;
-                    }
-                    QScrollBar::handle:vertical {
-                        background-color: #424242;
-                        min-height: 20px;
-                        border-radius: 5px;
-                    }
-                    QScrollBar::handle:vertical:hover {
-                        background-color: #686868;
-                    }
-                    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                        height: 0px;
-                    }
-                    QScrollBar:horizontal {
-                        border: none;
-                        background-color: #1E1E1E;
-                        height: 10px;
-                        margin: 0px;
-                    }
-                    QScrollBar::handle:horizontal {
-                        background-color: #424242;
-                        min-width: 20px;
-                        border-radius: 5px;
-                    }
-                    QScrollBar::handle:horizontal:hover {
-                        background-color: #686868;
-                    }
-                    QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
-                        width: 0px;
-                    }
-        
-                    /* Меню и диалоговые окна */
-                    QMenu {
-                        background-color: #252526;
-                        color: #FFFFFF;
-                        border: 1px solid #3F3F46;
-                    }
-                    QMenu::item:selected {
-                        background-color: #007ACC;
-                    }
-                    QDialog {
-                        background-color: #1E1E1E;
-                        color: #FFFFFF;
-                    }""")
-
-    
         self.db = db_service
         self.dm = driver_manager
         self.chart_widgets = []
@@ -216,17 +74,19 @@ class MainWindow(QMainWindow):
 
         top_bar = QHBoxLayout()
         lbl_c = QLabel("<b>Графиков:</b>")
-        lbl_c.setStyleSheet("color: white;")
+        theme.themed(lbl_c, f"color: {S('text')};")
         top_bar.addWidget(lbl_c)
 
         self.btn_add_chart = QPushButton("＋ Добавить график")
-        self.btn_add_chart.setStyleSheet("background-color: #466653; color: white; font-weight: bold;")
+        theme.themed(self.btn_add_chart,
+                     f"background-color: {S('btn_add')}; color: {S('text')}; font-weight: bold;")
         self.btn_add_chart.clicked.connect(self._add_chart)
         top_bar.addWidget(self.btn_add_chart)
 
         top_bar.addSpacing(20)
         self.btn_open_web = QPushButton("🌐 Открыть Web-клиент")
-        self.btn_open_web.setStyleSheet("background-color: #49657A; color: white;")
+        theme.themed(self.btn_open_web,
+                     f"background-color: {S('btn_action')}; color: {S('text')};")
         self.btn_open_web.clicked.connect(lambda: webbrowser.open(f"http://localhost:{WEB_PORT}"))
         top_bar.addWidget(self.btn_open_web)
 
@@ -262,17 +122,33 @@ class MainWindow(QMainWindow):
 
         self.bits_tab = BitsWidget(self.db)
         self.tabs.addTab(self.bits_tab, "Bits")
+        # новый/удалённый/переименованный сигнал в I/O должен сразу
+        # появляться в списке вкладке Bits и в подписях дорожек
+        self.io_tab.tags_changed.connect(self.bits_tab.refresh_tags)
 
         self.db_tab = DatabaseSettingsWidget(self.db, self.dm, on_reconnect_callback=self._reconnect_database)
         self.tabs.addTab(self.db_tab, "Database & Storage")
 
         self.help_tab = self._create_help_tab()
         self.tabs.addTab(self.help_tab, "Help")
+        theme.on_theme(lambda p: self._refresh_help_theme())
+
+        # Переключатель светлой/тёмной темы — в ряду вкладок, самый правый край.
+        self.btn_theme = QPushButton()
+        self.btn_theme.setCursor(Qt.CursorShape.PointingHandCursor)
+        theme.themed(self.btn_theme,
+                     "QPushButton { background: transparent; border: none; padding: 4px 10px;"
+                     f" color: {S('text_dim')}; font-weight: bold; font-size: 12px; }}"
+                     f" QPushButton:hover {{ color: {S('text')}; }}")
+        self._update_theme_btn_text()
+        self.btn_theme.clicked.connect(self._toggle_theme)
+        self.tabs.setCornerWidget(self.btn_theme, Qt.Corner.TopRightCorner)
 
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
-    def _address_reference_html(self):
+    def _address_reference_html(self, p=None):
         """Справочник адресов собирается из самих драйверов и не может устареть."""
+        p = p or theme.current()
         rows = []
         for key in driver_type_keys():
             cls = get_driver_class(key)
@@ -289,11 +165,17 @@ class MainWindow(QMainWindow):
             rows.append(
                 f"<h3>{html.escape(label)}</h3>"
                 f"<table border='0' cellpadding='4' cellspacing='0' width='100%'>"
-                f"<tr style='color:#9CDCFE'><th align='left'>Адрес</th>"
+                f"<tr style='color:{p.hint}'><th align='left'>Адрес</th>"
                 f"<th align='left'>Тип</th><th align='left'>Что читается</th></tr>"
                 f"{cells}</table>"
             )
         return "".join(rows)
+
+    def _build_help_html(self, p):
+        """HTML справки, перекрашенный под палитру p (токены __DIM__)."""
+        html_text = self._HELP_TEMPLATE.replace("__DIM__", p.text_dim)
+        html_text = html_text.replace("__ADDRESS_REFERENCE__", self._address_reference_html(p))
+        return html_text
 
     def _create_help_tab(self):
         help_tab = QWidget()
@@ -302,9 +184,14 @@ class MainWindow(QMainWindow):
 
         browser = QTextBrowser()
         browser.setOpenExternalLinks(True)
-        help_html = """
+        self.help_browser = browser
+        self._refresh_help_theme()
+        layout.addWidget(browser)
+        return help_tab
+
+    _HELP_TEMPLATE = """
         <h1>Справка пользователя</h1>
-        <p style='color:#A0A0A0'>PDA Next-Gen. Быстрое руководство по просмотру данных и настройке приложения.</p>
+        <p style='color:__DIM__'>PDA Next-Gen. Быстрое руководство по просмотру данных и настройке приложения.</p>
 
         <h2>1. Первый запуск</h2>
         <ol>
@@ -403,23 +290,31 @@ class MainWindow(QMainWindow):
           <li>Для Live-подключений убедитесь, что модуль не находится на паузе.</li>
         </ol>
         """
-        browser.setHtml(help_html.replace("__ADDRESS_REFERENCE__", self._address_reference_html()))
-        layout.addWidget(browser)
-        return help_tab
 
     def _on_tab_changed(self, idx):
         if idx == 1:
             self._reload_tag_tree()
 
-    def _apply_dark_title_bar(self):
-        if sys.platform != "win32":
-            return
-        try:
-            hwnd = int(self.winId())
-            dark_mode = ctypes.c_int(1)
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(dark_mode), ctypes.sizeof(dark_mode))
-        except Exception:
-            pass
+    def _toggle_theme(self):
+        name = theme.other_name()
+        theme.apply_theme(QApplication.instance(), name)
+        theme.save_choice(name)
+        self._update_theme_btn_text()
+        self._refresh_help_theme()
+
+    def _update_theme_btn_text(self):
+        if theme.current_name() == "dark":
+            self.btn_theme.setText("☀️ Светлая тема")
+        else:
+            self.btn_theme.setText("🌙 Тёмная тема")
+
+    def _refresh_help_theme(self):
+        """HTML справки перекрашивается под текущую палитру."""
+        p = theme.current()
+        self.help_browser.setStyleSheet(
+            f"QTextBrowser {{ background-color: {p.window}; color: {p.text_soft};"
+            f" border: 1px solid {p.border_soft}; }}")
+        self.help_browser.setHtml(self._build_help_html(p))
 
     def _reload_tag_tree(self):
         self.tag_tree.clear()

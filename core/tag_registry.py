@@ -15,6 +15,11 @@ from models.tag import Tag
 
 
 class TagRegistry:
+    # как часто полный проход ради «heartbeat»-тегов (log_interval_ms > 0).
+    # Значения меняющихся тегов собираются через _pending_ids, поэтому
+    # дорогой проход по всем точкам нужен редко.
+    HEARTBEAT_PERIOD = 0.25
+
     def __init__(self):
         self._points: Dict[int, TagPoint] = {}
         self._by_conn: Dict[int, Set[int]] = {}
@@ -22,6 +27,9 @@ class TagRegistry:
         # Теги, изменившиеся с момента последней выборки (для GUI)
         self._dirty: Set[int] = set()
         self._dirty_at: float = 0.0
+        # Теги с незаписанными переходами (значения лежат в буфере TagPoint)
+        self._pending_ids: Set[int] = set()
+        self._next_heartbeat: float = 0.0
 
     # ------------------------------------------------------------------ build
     def replace_all(self, tags: Iterable[Tag]):
@@ -87,7 +95,14 @@ class TagRegistry:
             return
         value = None if raw_value is None else float(raw_value) * point.scale + point.offset_val
         changed = point.update(raw_value, value, quality, ts or datetime.now())
-        if changed:
+        if changed and value is not None:
+            # переход записан в буфер TagPoint — журнал заберёт его на следующем
+            # скане даже если значение «вернётся» к прежнему до выборки
+            with self._lock:
+                self._pending_ids.add(tag_id)
+                self._dirty.add(tag_id)
+                self._dirty_at = time.monotonic()
+        elif changed:
             with self._lock:
                 self._dirty.add(tag_id)
                 self._dirty_at = time.monotonic()
@@ -124,14 +139,39 @@ class TagRegistry:
             points = list(self._points.values())
         return {p.tag_id: (p.timestamp, p.value, p.quality) for p in points}
 
+    def read_values(self, tag_ids: Iterable[int]) -> Dict[int, Tuple[Optional[datetime], Optional[float], int]]:
+        """
+        Текущие значения только запрошенных тегов: {tag_id: (время, значение, качество)}.
+        Дешевле live_snapshot() при тысячах тегов — используется GUI, чтобы
+        обновить «время обновления» лишь для видимых строк таблицы.
+        """
+        out = {}
+        get = self._points.get
+        for tid in tag_ids:
+            p = get(tid)
+            if p is not None:
+                out[tid] = (p.timestamp, p.value, p.quality)
+        return out
+
     # ----------------------------------------------------------------- journal
     def collect_due(self, now: datetime) -> List[Tuple[datetime, int, float, int]]:
-        """Точки, подлежащие регистрации (COV + собственный интервал + мёртвая зона)."""
+        """
+        Точки, подлежащие регистрации (COV + собственный интервал + мёртвая зона).
+        Двойные переходы между сканами (100->101->100) не теряются: журнал
+        выбирается медленнее опроса, поэтому для изменившихся со прошлого
+        скана точек возвращаются все промежуточные значения из Ring-буфера.
+        """
         with self._lock:
             points = list(self._points.values())
         out = []
         for point in points:
-            if point.due_for_log(now):
-                out.append((point.timestamp or now, point.tag_id, float(point.value), point.quality))
+            samples = point.drain_samples()
+            if not samples and point.due_for_log(now):
+                # первая точка / смена качества / heartbeat: отдаём текущее значение
+                samples = [(point.timestamp or now, float(point.value), point.quality)]
+            if samples:
+                out.extend((ts, point.tag_id, value, quality) for ts, value, quality in samples)
+                point.mark_logged(now, samples[-1])
+            elif point._last_logged_ts is None and point.value is not None:
                 point.mark_logged(now)
         return out

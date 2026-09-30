@@ -1,0 +1,3 @@
+﻿Name;Group;Address;Type;Scale;Offset;Unit
+IW0;Общие;IW0;INT16;1.0;0.0;
+New_Signal;Общие;SM0.0;BOOL;1.0;0.0;

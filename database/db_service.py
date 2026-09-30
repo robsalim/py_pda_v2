@@ -475,14 +475,41 @@ class DatabaseService:
             conn.commit()
             cur.close()
 
-    def delete_group(self, conn_id: int, group_name: str):
+    def delete_group(self, conn_id: int, group_name: str, with_tags: bool = False):
+        """
+        Удаляет группу. with_tags=True — вместе с её переменными и их
+        историей; иначе переменные перекладываются в «Общие».
+        Обе ветки в одной транзакции: при ошибке не откатывается «половина»
+        (раньше группа могла исчезнуть, а переменные остаться в ней).
+        """
         with self._get_connection() as conn:
             cur = conn.cursor()
             ph = "?" if self.engine == "sqlite" else "%s"
+            if with_tags:
+                cur.execute(
+                    f"SELECT id FROM tags WHERE connection_id = {ph} "
+                    f"AND COALESCE(group_name, 'Общие') = {ph};",
+                    (conn_id, group_name),
+                )
+                tag_ids = [r[0] if not isinstance(r, dict) else r["id"] for r in cur.fetchall()]
+                for chunk in self._chunks(tag_ids, 500):
+                    marks = ", ".join([ph] * len(chunk))
+                    cur.execute(f"DELETE FROM data_points WHERE tag_id IN ({marks});", tuple(chunk))
+                    cur.execute(f"DELETE FROM tags WHERE id IN ({marks});", tuple(chunk))
+            else:
+                cur.execute(
+                    f"UPDATE tags SET group_name = 'Общие' WHERE connection_id = {ph} AND group_name = {ph};",
+                    (conn_id, group_name),
+                )
             cur.execute(f"DELETE FROM tag_groups WHERE connection_id = {ph} AND name = {ph};", (conn_id, group_name))
-            cur.execute(f"UPDATE tags SET group_name = 'Общие' WHERE connection_id = {ph} AND group_name = {ph};", (conn_id, group_name))
             conn.commit()
             cur.close()
+
+    @staticmethod
+    def _chunks(items: List, size: int):
+        """Нарезка под лимит количества параметров одного запроса."""
+        for i in range(0, len(items), size):
+            yield items[i:i + size]
 
     @staticmethod
     def _row_to_tag(r) -> Tag:
@@ -633,13 +660,22 @@ class DatabaseService:
             cur.close()
 
     def delete_tag(self, tag_id: int):
+        """Удаляет переменную и всю её историю (без этого запись в
+        data_points остаётся с висящим tag_id и не видна в интерфейсе)."""
+        self.delete_tags([tag_id])
+
+    def delete_tags(self, tag_ids: List[int]):
+        """Пакетное удаление переменных вместе с их историей."""
+        ids = list(dict.fromkeys(tag_ids or []))
+        if not ids:
+            return
         with self._get_connection() as conn:
             cur = conn.cursor()
             ph = "?" if self.engine == "sqlite" else "%s"
-            # История удалённого тега больше не нужна: без этого в data_points
-            # остаются точки, которые видны всем вкладкам графиков
-            cur.execute(f"DELETE FROM data_points WHERE tag_id = {ph};", (tag_id,))
-            cur.execute(f"DELETE FROM tags WHERE id = {ph};", (tag_id,))
+            for chunk in self._chunks(ids, 500):
+                marks = ", ".join([ph] * len(chunk))
+                cur.execute(f"DELETE FROM data_points WHERE tag_id IN ({marks});", tuple(chunk))
+                cur.execute(f"DELETE FROM tags WHERE id IN ({marks});", tuple(chunk))
             conn.commit()
             cur.close()
 

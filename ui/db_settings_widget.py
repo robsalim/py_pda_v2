@@ -6,6 +6,9 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer, QDateTime
 
+from ui import theme
+from ui.theme import S
+
 class DatabaseSettingsWidget(QWidget):
     def __init__(self, db_service, driver_manager, on_reconnect_callback, parent=None):
         super().__init__(parent)
@@ -20,11 +23,11 @@ class DatabaseSettingsWidget(QWidget):
         layout.setSpacing(14)
 
         title = QLabel("<h2>Настройки базы данных и архивации (Data Storage)</h2>")
-        title.setStyleSheet("color: white;")
+        theme.themed(title, f"color: {S('text')};")
         layout.addWidget(title)
 
         frame = QFrame()
-        frame.setStyleSheet("background-color: #252526; border: 1px solid #3F3F46; border-radius: 6px; padding: 12px;")
+        theme.themed(frame, "background-color: {%panel%}; border: 1px solid {%border_soft%}; border-radius: 6px; padding: 12px;")
         f_layout = QFormLayout(frame)
 
         self.combo_engine = QComboBox()
@@ -81,15 +84,15 @@ class DatabaseSettingsWidget(QWidget):
 
         btn_box = QHBoxLayout()
         self.btn_test = QPushButton("🔌 Проверить подключение")
-        self.btn_test.setStyleSheet("background-color: #49657A; color: white; padding: 6px 16px; font-weight: bold;")
+        theme.themed(self.btn_test, theme.btn_qss("action", border=False))
         self.btn_test.clicked.connect(self._test_connection)
 
         self.btn_save = QPushButton("💾 Применить и переключить базу")
-        self.btn_save.setStyleSheet("background-color: #466653; color: white; font-weight: bold; padding: 6px 20px;")
+        theme.themed(self.btn_save, theme.btn_qss("add", border=False))
         self.btn_save.clicked.connect(self._save_and_reconnect)
 
         self.btn_create_db = QPushButton("＋ Создать базу")
-        self.btn_create_db.setStyleSheet("background-color: #665477; color: white; font-weight: bold; padding: 6px 16px;")
+        theme.themed(self.btn_create_db, theme.btn_qss("violet", border=False))
         self.btn_create_db.clicked.connect(self._create_database)
 
         btn_box.addWidget(self.btn_test)
@@ -99,11 +102,12 @@ class DatabaseSettingsWidget(QWidget):
         layout.addLayout(btn_box)
 
         self.lbl_status = QLabel("Статус: готов к подключению")
-        self.lbl_status.setStyleSheet("color: #858585; font-size: 13px;")
+        self._status_state = "faint"
+        self._restyle_status = theme.themed(self.lbl_status, lambda p: theme.hint_qss(p, self._status_state, 13))
         layout.addWidget(self.lbl_status)
 
         self.status_panel = QFrame()
-        self.status_panel.setStyleSheet("QFrame { background: rgba(37, 37, 38, 220); border: 1px solid #3F3F46; border-radius: 5px; }")
+        theme.themed(self.status_panel, "QFrame { background: {%panel%}; border: 1px solid {%border_soft%}; border-radius: 5px; }")
         status_layout = QVBoxLayout(self.status_panel)
         status_layout.setContentsMargins(10, 8, 10, 8)
         status_layout.setSpacing(3)
@@ -112,8 +116,15 @@ class DatabaseSettingsWidget(QWidget):
         self.lbl_journal_status = QLabel()
         self.lbl_errors_status = QLabel()
         self.lbl_details_status = QLabel()
+        self._db_state = "faint"
+        self._journal_state = "faint"
+        self._errors_state = "ok"
+        self._restyle_db_status = theme.themed(self.lbl_db_status, lambda p: theme.hint_qss(p, self._db_state, 12))
+        self._restyle_journal_status = theme.themed(self.lbl_journal_status, lambda p: theme.hint_qss(p, self._journal_state, 11))
+        self._restyle_errors_status = theme.themed(self.lbl_errors_status, lambda p: theme.hint_qss(p, self._errors_state, 12))
+        theme.themed(self.lbl_modules_status, f"color: {S('text_soft')}; font-size: 12px;")
+        theme.themed(self.lbl_details_status, f"color: {S('text_faint')}; font-size: 11px;")
         for label in (self.lbl_db_status, self.lbl_modules_status, self.lbl_journal_status, self.lbl_errors_status, self.lbl_details_status):
-            label.setStyleSheet("color: #D8D8D8; font-size: 12px;")
             label.setWordWrap(True)
             status_layout.addWidget(label)
         layout.addWidget(self.status_panel)
@@ -131,11 +142,12 @@ class DatabaseSettingsWidget(QWidget):
         db_error = getattr(self.db, "last_error", "")
         if available:
             self.lbl_db_status.setText("БД: подключена")
-            self.lbl_db_status.setStyleSheet("color: #7FBD8A; font-size: 12px;")
+            self._db_state = "ok"
         else:
             reason = f": {db_error}" if db_error else ""
             self.lbl_db_status.setText(f"БД: недоступна{reason}")
-            self.lbl_db_status.setStyleSheet("color: #E08A8A; font-size: 12px;")
+            self._db_state = "error"
+        self._restyle_db_status()
 
         try:
             connections = self.db.get_all_connections() if available else []
@@ -163,14 +175,15 @@ class DatabaseSettingsWidget(QWidget):
                 journal_line += f" | {j['last_error'][:80]}"
             bad = j.get("dropped", 0) > 0 or j.get("errors", 0) > 0
             self.lbl_journal_status.setText(journal_line)
-            self.lbl_journal_status.setStyleSheet(f"color: {'#E0B04A' if bad else '#858585'}; font-size: 11px;")
+            self._journal_state = "warn" if bad else "faint"
+            self._restyle_journal_status()
         except Exception:
             self.lbl_journal_status.setText("Журнал: нет данных")
 
         self.lbl_errors_status.setText("Ошибки: " + ("; ".join(errors) if errors else "нет активных ошибок"))
-        self.lbl_errors_status.setStyleSheet(f"color: {'#E08A8A' if errors else '#7FBD8A'}; font-size: 12px;")
+        self._errors_state = "error" if errors else "ok"
+        self._restyle_errors_status()
         self.lbl_details_status.setText("Последнее обновление: " + QDateTime.currentDateTime().toString("dd.MM.yyyy HH:mm:ss"))
-        self.lbl_details_status.setStyleSheet("color: #858585; font-size: 11px;")
 
     def _load_current_config(self):
         engine = getattr(self.db, "engine", "postgres")

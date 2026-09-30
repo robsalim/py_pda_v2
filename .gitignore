@@ -19,3 +19,8 @@ dist/
 # Локальные архивы и артефакты
 *.zip
 *.pdf
+
+# Служебные файлы macOS/локальные настройки
+.DS_Store
+ui_theme.json
+rel_body.json

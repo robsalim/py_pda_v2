@@ -16,6 +16,8 @@ import numpy as np
 
 from database.db_service import DatabaseService
 from models.tag import Tag
+from ui import theme
+from ui.theme import S
 
 def make_step_curve(times: np.ndarray, values: np.ndarray):
     if len(times) == 0:
@@ -100,41 +102,35 @@ class ChartWidget(QWidget):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
 
-        label_style = "color: #FFFFFF; font-weight: bold; font-size: 12px;"
-        combo_style = """
-            QComboBox { background-color: #2D2D30; color: #FFFFFF; border: 1px solid #55555A; border-radius: 4px; padding: 4px 8px; font-size: 12px; }
-            QComboBox::drop-down { border: none; }
-            QComboBox QAbstractItemView { background-color: #252526; color: #FFFFFF; selection-background-color: #007ACC; selection-color: #FFFFFF; }
-        """
-        btn_style = """
-            QPushButton { background-color: #49657A; color: #FFFFFF; border: 1px solid #60A5FA; border-radius: 4px; padding: 4px 10px; font-size: 12px; font-weight: bold; }
-            QPushButton:hover { background-color: #5A778D; border-color: #718A99; }
-        """
+        label_style = f"color: {S('text')}; font-weight: bold; font-size: 12px;"
+        combo_style = theme.COMBO_QSS
+        btn_style = theme.ACTION_BTN_QSS
 
         header1 = QHBoxLayout()
         self.lbl_title = QLabel(f"<b>{self.title}</b>")
-        self.lbl_title.setStyleSheet("color: #FFFFFF; font-size: 13px;")
+        theme.themed(self.lbl_title, f"color: {S('text')}; font-size: 13px;")
         header1.addWidget(self.lbl_title)
         header1.addSpacing(10)
         lbl_mode = QLabel("Режим:")
-        lbl_mode.setStyleSheet(label_style)
+        theme.themed(lbl_mode, label_style)
         header1.addWidget(lbl_mode)
 
         self.combo_mode = QComboBox()
-        self.combo_mode.setStyleSheet(combo_style)
+        theme.themed(self.combo_mode, combo_style)
         self.combo_mode.addItems(["Live", "Archive"])
         self.combo_mode.currentTextChanged.connect(self._on_mode_changed)
         header1.addWidget(self.combo_mode)
 
         self.btn_pause = QPushButton("⏸ Пауза")
-        self.btn_pause.setStyleSheet(btn_style)
+        self._pause_tpl = btn_style
+        self._restyle_pause = theme.themed(self.btn_pause, lambda p: theme.fill(self._pause_tpl, p))
         self.btn_pause.clicked.connect(self._toggle_pause)
         header1.addWidget(self.btn_pause)
 
         self.lbl_live_span = QLabel("Окно Live:")
-        self.lbl_live_span.setStyleSheet(label_style)
+        theme.themed(self.lbl_live_span, label_style)
         self.combo_live_span = QComboBox()
-        self.combo_live_span.setStyleSheet(combo_style)
+        theme.themed(self.combo_live_span, combo_style)
         self.combo_live_span.addItems(["15 мин", "1 час", "4 часа", "12 часов", "24 часа", "72 часа"])
         self.combo_live_span.setCurrentText("24 часа")
         self.combo_live_span.currentTextChanged.connect(self._on_span_changed)
@@ -143,15 +139,15 @@ class ChartWidget(QWidget):
 
         header1.addSpacing(14)
         self.lbl_x1 = QLabel("X1: —")
-        self.lbl_x1.setStyleSheet("color: #FFD700; font-weight: bold; font-size: 12px;")
+        theme.themed(self.lbl_x1, f"color: {S('cursor_x1')}; font-weight: bold; font-size: 12px;")
         header1.addWidget(self.lbl_x1)
 
         self.lbl_x2 = QLabel("X2: —")
-        self.lbl_x2.setStyleSheet("color: #00E5FF; font-weight: bold; font-size: 12px;")
+        theme.themed(self.lbl_x2, f"color: {S('cursor_x2')}; font-weight: bold; font-size: 12px;")
         header1.addWidget(self.lbl_x2)
 
         self.lbl_dt = QLabel("ΔT: —")
-        self.lbl_dt.setStyleSheet("color: #00E676; font-weight: bold; font-size: 12px;")
+        theme.themed(self.lbl_dt, f"color: {S('cursor_dt')}; font-weight: bold; font-size: 12px;")
         header1.addWidget(self.lbl_dt)
 
         self.chips_container = QHBoxLayout()
@@ -159,17 +155,17 @@ class ChartWidget(QWidget):
         header1.addStretch()
 
         self.btn_reset_zoom = QPushButton("🔍 100%")
-        self.btn_reset_zoom.setStyleSheet(btn_style)
+        theme.themed(self.btn_reset_zoom, btn_style)
         self.btn_reset_zoom.clicked.connect(self._reset_zoom)
         header1.addWidget(self.btn_reset_zoom)
 
         self.btn_clear = QPushButton("✕ Очистить")
-        self.btn_clear.setStyleSheet(btn_style)
+        theme.themed(self.btn_clear, btn_style)
         self.btn_clear.clicked.connect(self.clear_chart)
         header1.addWidget(self.btn_clear)
 
         self.btn_export_pdf = QPushButton("PDF")
-        self.btn_export_pdf.setStyleSheet("background-color: #476B73; color: white; border: 1px solid #64858A; border-radius: 4px; padding: 4px 10px; font-weight: bold;")
+        theme.themed(self.btn_export_pdf, "background-color: {%btn_teal%}; color: {%text%}; border: 1px solid {%btn_teal_border%}; border-radius: 4px; padding: 4px 10px; font-weight: bold;")
         self.btn_export_pdf.setToolTip("Экспорт графика с легендой в PDF")
         self.btn_export_pdf.clicked.connect(self._export_pdf)
         header1.addWidget(self.btn_export_pdf)
@@ -178,44 +174,38 @@ class ChartWidget(QWidget):
             self.btn_close = QPushButton("×")
             self.btn_close.setFixedSize(24, 24)
             self.btn_close.setToolTip("Закрыть график")
-            self.btn_close.setStyleSheet("background-color: #7A4B50; color: white; border: 1px solid #956168; border-radius: 4px; font-weight: normal; font-size: 16px; padding: 0;")
+            theme.themed(self.btn_close, "background-color: {%btn_danger%}; color: {%text%}; border: 1px solid {%btn_danger_border%}; border-radius: 4px; font-weight: normal; font-size: 16px; padding: 0;")
             self.btn_close.clicked.connect(self.on_close_callback)
             header1.addWidget(self.btn_close)
         layout.addLayout(header1)
 
         self.header2 = QHBoxLayout()
         self.lbl_arch_start = QLabel("Начало:")
-        self.lbl_arch_start.setStyleSheet(label_style)
+        theme.themed(self.lbl_arch_start, label_style)
         self.dt_start = QDateTimeEdit()
-        self.dt_start.setStyleSheet("""
-            QDateTimeEdit { background-color: #2D2D30; color: #FFFFFF; border: 1px solid #55555A; border-radius: 4px; padding: 4px 6px; font-size: 12px; }
-            QCalendarWidget QWidget { background-color: #252526; color: #FFFFFF; }
-        """)
+        theme.themed(self.dt_start, theme.DTEDIT_QSS)
         self.dt_start.setDisplayFormat("dd.MM.yyyy HH:mm:ss")
         self.dt_start.setCalendarPopup(True)
         self.dt_start.setDateTime(QDateTime.currentDateTime().addSecs(-86400))
 
         self.lbl_arch_dur = QLabel("Длительность:")
-        self.lbl_arch_dur.setStyleSheet(label_style)
+        theme.themed(self.lbl_arch_dur, label_style)
         self.combo_duration = QComboBox()
-        self.combo_duration.setStyleSheet(combo_style)
+        theme.themed(self.combo_duration, combo_style)
         self.combo_duration.addItems(["15 мин", "1 час", "4 часа", "12 часов", "24 часа", "72 часа"])
         self.combo_duration.setCurrentText("24 часа")
         self.combo_duration.currentTextChanged.connect(self._on_span_changed)
 
         self.btn_nav_prev = QPushButton("◀")
-        self.btn_nav_prev.setStyleSheet(btn_style)
+        theme.themed(self.btn_nav_prev, btn_style)
         self.btn_nav_prev.clicked.connect(lambda: self._shift_archive_window(-1))
 
         self.btn_nav_next = QPushButton("▶")
-        self.btn_nav_next.setStyleSheet(btn_style)
+        theme.themed(self.btn_nav_next, btn_style)
         self.btn_nav_next.clicked.connect(lambda: self._shift_archive_window(1))
 
         self.btn_load_archive = QPushButton("📥 Загрузить архив")
-        self.btn_load_archive.setStyleSheet("""
-            QPushButton { background-color: #49657A; color: #FFFFFF; font-weight: bold; border-radius: 4px; padding: 5px 14px; font-size: 12px; border: 1px solid #5A778D; }
-            QPushButton:hover { background-color: #5A778D; }
-        """)
+        theme.themed(self.btn_load_archive, theme.LOAD_BTN_QSS)
         self.btn_load_archive.clicked.connect(lambda: self.update_data(force_fit=True))
 
         for w in [self.lbl_arch_start, self.dt_start, self.lbl_arch_dur, self.combo_duration,
@@ -227,23 +217,17 @@ class ChartWidget(QWidget):
         layout.addLayout(self.header2)
 
         self.date_axis = DateAxisItem(orientation='bottom')
-        self.date_axis.setPen(pg.mkPen(color='#858585', width=1))
-        self.date_axis.setTextPen(pg.mkPen(color='#D8D8D8'))
 
         self.plot_widget = pg.PlotWidget(axisItems={'bottom': self.date_axis})
-        self.plot_widget.setBackground('#181818')
-        self.plot_widget.showGrid(x=True, y=True, alpha=0.35)
         self.legend_panel = QFrame(self.plot_widget)
-        self.legend_panel.setStyleSheet("QFrame { background-color: rgba(28, 28, 28, 180); border: 1px solid rgba(130, 130, 130, 80); border-radius: 4px; }")
+        theme.themed(self.legend_panel, "QFrame { background-color: {%legend_bg%}; border: 1px solid {%legend_border%}; border-radius: 4px; }")
         self.legend_layout = QVBoxLayout(self.legend_panel)
         self.legend_layout.setContentsMargins(8, 5, 8, 5)
         self.legend_layout.setSpacing(3)
         self.legend_panel.hide()
 
-        y_axis = self.plot_widget.getAxis('left')
-        y_axis.setPen(pg.mkPen(color='#858585', width=1))
-        y_axis.setTextPen(pg.mkPen(color='#D8D8D8'))
-
+        # Все цвета pyqtgraph (фон/оси/курсоры/перекрестие) — из текущей палитры,
+        # перекрашиваются при смене темы.
         self.plot_widget.setMouseEnabled(x=True, y=False)
         view_box = self.plot_widget.getViewBox()
         view_box.setMouseMode(pg.ViewBox.RectMode)
@@ -256,14 +240,10 @@ class ChartWidget(QWidget):
         self.plot_widget.scene().sigMouseClicked.connect(self._on_plot_clicked)
         self.cursor_x1 = pg.InfiniteLine(
             angle=90, movable=True,
-            pen=pg.mkPen('#FFD700', width=1.8, style=Qt.PenStyle.DashLine),
-            hoverPen=pg.mkPen('#FFE600', width=2.5)
-        )
+            pen=pg.mkPen('k', width=1.8, style=Qt.PenStyle.DashLine))
         self.cursor_x2 = pg.InfiniteLine(
             angle=90, movable=True,
-            pen=pg.mkPen('#00E5FF', width=1.8, style=Qt.PenStyle.DashLine),
-            hoverPen=pg.mkPen('#80F3FF', width=2.5)
-        )
+            pen=pg.mkPen('k', width=1.8, style=Qt.PenStyle.DashLine))
         self.cursor_x1.sigPositionChanged.connect(self._update_cursor_labels)
         self.cursor_x2.sigPositionChanged.connect(self._update_cursor_labels)
 
@@ -272,12 +252,8 @@ class ChartWidget(QWidget):
 
         # Перекрестие под курсором как на вебе: две тонкие линии;
         # значения по Y в точке под курсором выводятся в легенду
-        self.cross_v = pg.InfiniteLine(
-            angle=90, movable=False,
-            pen=pg.mkPen('#9DA5B4', width=1))
-        self.cross_h = pg.InfiniteLine(
-            angle=0, movable=False,
-            pen=pg.mkPen('#9DA5B4', width=1))
+        self.cross_v = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('k', width=1))
+        self.cross_h = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen('k', width=1))
         for line in (self.cross_v, self.cross_h):
             line.setZValue(90)
             line.hide()
@@ -292,10 +268,35 @@ class ChartWidget(QWidget):
         self.resize_handle = QWidget()
         self.resize_handle.setFixedHeight(8)
         self.resize_handle.setCursor(Qt.CursorShape.SizeVerCursor)
-        self.resize_handle.setStyleSheet("background-color: #3F596B; border-radius: 3px;")
+        theme.themed(self.resize_handle, "background-color: {%handle%}; border-radius: 3px;")
         self.resize_handle.installEventFilter(self)
         layout.addWidget(self.resize_handle)
+
+        # Все цвета pyqtgraph (фон/оси/курсоры/перекрестие) — из текущей палитры,
+        # перекрашиваются при смене темы.
+        theme.on_theme(self._apply_plot_theme)
+        self._apply_plot_theme(theme.current())
+
         self._update_legend_panel()
+
+    def _apply_plot_theme(self, p):
+        """Перекрашивает фон, оси, курсоры и перекрестие под палитру p."""
+        self.plot_widget.setBackground(p.plot_bg)
+        self.plot_widget.showGrid(x=True, y=True, alpha=p.grid_alpha)
+        axis_pen = pg.mkPen(color=p.plot_axis, width=1)
+        text_pen = pg.mkPen(color=p.plot_text)
+        self.date_axis.setPen(axis_pen)
+        self.date_axis.setTextPen(text_pen)
+        left_axis = self.plot_widget.getAxis('left')
+        left_axis.setPen(axis_pen)
+        left_axis.setTextPen(text_pen)
+        self.cursor_x1.setPen(pg.mkPen(p.cursor_x1, width=1.8, style=Qt.PenStyle.DashLine))
+        self.cursor_x1.setHoverPen(pg.mkPen(p.cursor_x1_hover, width=2.5))
+        self.cursor_x2.setPen(pg.mkPen(p.cursor_x2, width=1.8, style=Qt.PenStyle.DashLine))
+        self.cursor_x2.setHoverPen(pg.mkPen(p.cursor_x2_hover, width=2.5))
+        cross_pen = pg.mkPen(p.crosshair, width=1)
+        self.cross_v.setPen(cross_pen)
+        self.cross_h.setPen(cross_pen)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -336,7 +337,7 @@ class ChartWidget(QWidget):
             remove_button = QPushButton("×")
             remove_button.setFixedSize(18, 18)
             remove_button.setToolTip("Убрать сигнал с графика")
-            remove_button.setStyleSheet("QPushButton { color: #C8C8C8; background: transparent; border: none; padding: 0; font-weight: normal; font-size: 14px; } QPushButton:hover { color: #FFFFFF; }")
+            theme.themed(remove_button, "QPushButton { color: {%chip_line%}; background: transparent; border: none; padding: 0; font-weight: normal; font-size: 14px; } QPushButton:hover { color: {%text%}; }")
             tag_id = item["tag"].id
             remove_button.clicked.connect(lambda checked=False, signal_id=tag_id: self.remove_signal(signal_id))
             row.addWidget(line)
@@ -434,10 +435,12 @@ class ChartWidget(QWidget):
         self.is_paused = not self.is_paused
         if self.is_paused:
             self.btn_pause.setText("▶ Продолжить")
-            self.btn_pause.setStyleSheet("background-color: #466653; color: white; font-weight: bold; border-radius: 4px; padding: 4px 10px;")
+            self._pause_tpl = theme.btn_qss("add")
         else:
             self.btn_pause.setText("⏸ Пауза")
-            self.btn_pause.setStyleSheet("background-color: #3E3E42; color: white; font-weight: bold; border-radius: 4px; padding: 4px 10px;")
+            self._pause_tpl = theme.btn_qss("neutral")
+        self._restyle_pause()
+        if not self.is_paused:
             self.update_data()
 
     def _on_span_changed(self):
@@ -611,11 +614,7 @@ class ChartWidget(QWidget):
                     )
                     painter.drawPixmap(target.toRect(), scaled)
             finally:
-                self.plot_widget.setBackground('#181818')
-                self.plot_widget.showGrid(x=True, y=True, alpha=0.35)
-                for axis, pen, text_pen in zip(axes, old_axis_pens, old_text_pens):
-                    axis.setPen(pen)
-                    axis.setTextPen(text_pen)
+                self._apply_plot_theme(theme.current())
 
             y = chart_rect.bottom() + 35
             painter.setPen(QColor("#202020"))

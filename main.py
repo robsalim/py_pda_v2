@@ -12,6 +12,7 @@ from config import DB_CONFIG, APP_NAME, APP_VERSION, JOURNAL_CONFIG
 from database.db_service import DatabaseService
 from drivers.driver_manager import DriverManager
 from ui.main_window import MainWindow
+from ui import theme
 
 def enable_high_resolution_timer():
     """
@@ -41,59 +42,8 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName(f"{APP_NAME} v{APP_VERSION}")
-# Глобальный тёмный стиль для всех кнопок приложения
-    app.setStyleSheet("""
-        QPushButton {
-            background-color: #2D2D30;
-            color: #FFFFFF;
-            border: 1px solid #3F3F46;
-            border-radius: 4px;
-            padding: 5px 12px;
-            font-size: 12px;
-            font-weight: 500;
-            outline: none;
-        }
-        QPushButton:hover {
-            background-color: #3E3E42;
-            border-color: #007ACC;
-        }
-        QPushButton:pressed {
-            background-color: #007ACC;
-            border-color: #005999;
-        }
-        QPushButton:disabled {
-            background-color: #252526;
-            color: #656565;
-            border-color: #2D2D30;
-        }
-        QLineEdit, QSpinBox, QDateTimeEdit, QComboBox {
-            background-color: #2D2D30;
-            color: #FFFFFF;
-            border: 1px solid #55555A;
-            border-radius: 4px;
-            padding: 4px 6px;
-            selection-background-color: #3F6B8A;
-        }
-        QComboBox QAbstractItemView, QListView, QTreeView, QTableView {
-            background-color: #252526;
-            color: #FFFFFF;
-            border: 1px solid #55555A;
-            selection-background-color: #3F596B;
-            selection-color: #FFFFFF;
-        }
-        QToolTip {
-            background-color: #252526;
-            color: #FFFFFF;
-            border: 1px solid #55555A;
-        }
-        QDialog, QFileDialog, QMessageBox {
-            background-color: #252526;
-            color: #FFFFFF;
-        }
-        QDialog QLabel, QFileDialog QLabel, QMessageBox QLabel {
-            color: #D8D8D8;
-        }
-    """)
+    # Глобальный стиль из выбранной темы (светлая/тёмная)
+    theme.apply_theme(app, theme.load_choice())
     
     print("[System] Проверка структуры БД...")
     # Запуск в offline-режиме позволяет открыть настройки при недоступной СУБД.

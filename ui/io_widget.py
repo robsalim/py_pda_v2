@@ -3,18 +3,21 @@ import json
 import re
 from typing import Tuple
 from PyQt6.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QTreeWidget, QTreeWidgetItem,
+    QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QTreeWidget, QTreeWidgetItem,
     QLabel, QPushButton, QTableView, QHeaderView, QLineEdit, QComboBox,
     QSplitter, QDialog, QFormLayout, QDoubleSpinBox,
     QSpinBox, QMessageBox, QAbstractItemView, QInputDialog, QFileDialog,
-    QMenu
+    QMenu, QSizePolicy
 )
-from PyQt6.QtCore import Qt, QTimer, QMimeData
+from PyQt6.QtCore import Qt, QTimer, QMimeData, pyqtSignal
 from PyQt6.QtGui import QDrag, QDropEvent, QDragEnterEvent, QDragMoveEvent
 from database.db_service import DatabaseService
 from models.connection import Connection
 from models.tag import Tag
 from ui.tag_table_model import TagTableModel, TagFilterModel
+from ui.styles import SPIN_BUTTON_QSS
+from ui import theme
+from ui.theme import S
 from drivers.registry import (
     driver_type_keys,
     get_driver_class,
@@ -23,66 +26,138 @@ from drivers.registry import (
 )
 from drivers.snap7_driver import Snap7Driver
 
+# ---------------------------------------------------------------------------
+# Конструктор адреса Siemens S7
+# ---------------------------------------------------------------------------
+# Память S7 разбита на области; адрес = область + размер + смещение (+ бит).
+# Разумный набор областей ограничен тем, что реально читает драйвер
+# (AREA_BY_LETTER в drivers/snap7_driver.py).
+S7_AREAS = [
+    ("DB", "DB — блок данных"),
+    ("M", "M — Merker (флаги)"),
+    ("I", "I — образ входа"),
+    ("Q", "Q — образ выхода"),
+]
+
+# Буква размера в адресе и её смысл
+S7_SIZES = [
+    ("B", "B (1 байт)"),
+    ("W", "W (2 байта)"),
+    ("D", "D (4 байта)"),
+    ("X", "X (бит)"),
+]
+
+# Размер однозначно диктует тип только для X/D/B; для W допустимы оба целых.
+# Иначе драйвер прочтёт не то (REAL в слове или INT16 в бите — классическая
+# причина «плывущих» значений).
+TYPE_BY_SIZE = {"B": "BYTE", "W": "INT16", "D": "FLOAT", "X": "BOOL"}
+# Типы, которые драйвер реально умеет читать из адреса данного размера
+# (см. Snap7Driver._extract): B -> byte, W -> int/uint, D -> real/dword,
+# X -> бит. Навязываем тип, только если выбранный в этот набор не входит,
+# чтобы не портить корректную пару «DB1.DBW4 + UINT16» при редактировании.
+SIZE_TYPES = {"B": ("BYTE",), "W": ("INT16", "UINT16"),
+              "D": ("FLOAT", "DWORD"), "X": ("BOOL",)}
+# Обратная связь: по выбранному типу подсказываем минимально подходящий размер
+SIZE_BY_TYPE = {"BOOL": "X", "BYTE": "B", "FLOAT": "D", "INT16": "W",
+                "UINT16": "W", "DWORD": "D"}
+
+# Набор типов: BYTE (get_byte) и DWORD (get_dword) читает только snap7
+BASE_DATA_TYPES = ["FLOAT", "INT16", "UINT16", "BOOL"]
+S7_EXTRA_DATA_TYPES = ["BYTE", "DWORD"]
+# Имя элемента Areas из драйвера -> буква области для ввода пользователя
+LETTER_BY_AREA = {"MK": "M", "PE": "I", "PA": "Q"}
+
+
+# ---------------------------------------------------------------------------
+# QSS-шаблоны диалогов (токены {%token%} заполняются палитрой ui/theme.py)
+# ---------------------------------------------------------------------------
+def _dialog_qss(p):
+    return f"""
+        QWidget {{
+            background-color: {p.window};
+            color: {p.text};
+            font-size: 12px;
+        }}
+        QLabel {{
+            color: {p.text};
+            background: transparent;
+        }}
+        QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox {{
+            background-color: {p.input};
+            color: {p.text};
+            border: 1px solid {p.border};
+            border-radius: 4px;
+            padding: 4px 6px;
+        }}
+    """ + theme.spin_qss(p) + f"""
+        /* Стиль для ВСЕХ кнопок по умолчанию (с hover и pressed) */
+        QPushButton {{
+            background-color: {p.btn_action};
+            color: {p.text};
+            border: 1px solid {p.border};
+            border-radius: 4px;
+            padding: 5px 12px;
+            font-weight: bold;
+            outline: none;
+        }}
+        QPushButton:hover {{
+            background-color: {p.btn_action_hover};
+            border-color: {p.btn_action_border_hover};
+        }}
+        QPushButton:pressed {{
+            background-color: {p.btn_action_pressed};
+            border-color: {p.accent_dark};
+        }}
+        QPushButton:disabled {{
+            background-color: {p.disabled_bg};
+            color: {p.disabled_fg};
+            border-color: {p.border_muted};
+        }}
+    """
+
+
+OK_BTN_QSS = """
+    QPushButton { background-color: {%btn_action%}; color: {%text%}; border: 1px solid {%btn_action_border%}; font-weight: bold; border-radius: 4px; padding: 5px 12px; outline: none; }
+    QPushButton:hover { background-color: {%btn_action_hover%}; }
+    QPushButton:pressed { background-color: {%btn_action_pressed%}; }
+"""
+
+CONN_DIALOG_QSS = """
+    QDialog { background-color: {%window%}; color: {%text%}; }
+    QLabel { color: {%text%}; font-size: 12px; background: transparent; }
+    QLineEdit, QComboBox, QSpinBox {
+        background-color: {%input%}; color: {%text%}; border: 1px solid {%border%};
+        border-radius: 4px; padding: 4px 6px; font-size: 12px;
+    }
+    QPushButton {
+        background-color: {%btn_action%}; color: {%text%}; border: 1px solid {%border%};
+        border-radius: 4px; padding: 5px 14px; font-weight: bold; font-size: 12px;
+    }
+    QPushButton:hover { background-color: {%btn_action_hover%}; border-color: {%btn_action_border_hover%}; }
+"""
+
+
+# Индикаторы валидации/подсказок адреса: цвет по состоянию поля.
+def hint_qss(p, state: str) -> str:
+    color = {"ok": p.ok, "error": p.error}.get(state, p.hint)
+    return f"color: {color}; font-size: 11px; padding-left: 2px;"
+
+
 class TagEditDialog(QDialog):
     def __init__(self, conn_id: int, current_group: str = "Общие", existing_groups=None,
                  tag: Tag = None, driver_type: str = None, parent=None):
         super().__init__(parent)
         self.conn_id = conn_id
         self.tag = tag
+        # Защита от рекурсии: конструктор <-> текстовое поле <-> тип
+        self._syncing = False
         self.driver_type = normalize_driver_type(driver_type) if driver_type else None
         self.driver_class = get_driver_class(self.driver_type) if self.driver_type else None
         self.setWindowTitle("Редактирование переменной" if tag else "Создать переменную")
-        self.setFixedWidth(380)
-# Базовый стиль виджета и всех дочерних элементов по умолчанию
-        self.setStyleSheet("""
-            QWidget {
-                background-color: #1E1E1E;
-                color: #FFFFFF;
-                font-size: 12px;
-            }
-            QLabel {
-                color: #FFFFFF;
-                background: transparent;
-            }
-            QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox {
-                background-color: #2D2D30;
-                color: #FFFFFF;
-                border: 1px solid #55555A;
-                border-radius: 4px;
-                padding: 4px 6px;
-            }
-            /* Стиль для ВСЕХ кнопок по умолчанию (серые, с hover и pressed) */
-            QPushButton {
-                background-color: #49657A;
-                color: #FFFFFF;
-                border: 1px solid #55555A;
-                border-radius: 4px;
-                padding: 5px 12px;
-                font-weight: bold;
-                outline: none;
-            }
-            QPushButton:hover {
-                background-color: #5A778D;
-                border-color: #718A99;
-            }
-            QPushButton:pressed {
-                background-color: #3F596B;
-                border-color: #314653;
-            }
-            QPushButton:disabled {
-                background-color: #252526;
-                color: #656565;
-                border-color: #2D2D30;
-            }
-        """)
-
-        # Стиль главной кнопки (Создание / Сохранение)
-        btn_blue_style = """
-            QPushButton { background-color: #49657A; color: white; border: 1px solid #647C8C; font-weight: bold; border-radius: 4px; padding: 5px 12px; outline: none; }
-            QPushButton:hover { background-color: #5A778D; }
-            QPushButton:pressed { background-color: #314653; }
-        """
-        self.btn_ok_style = btn_blue_style
+        self.is_s7 = self.driver_type == "snap7"
+        self.setFixedWidth(560 if self.is_s7 else 440)
+        # Базовый стиль виджета и всех дочерних элементов по умолчанию
+        theme.themed(self, _dialog_qss)
 
         layout = QFormLayout(self)
         self.txt_name = QLineEdit(tag.name if tag else "New_Signal")
@@ -103,13 +178,17 @@ class TagEditDialog(QDialog):
         if hint:
             self.txt_addr.setPlaceholderText(hint)
         self.combo_type = QComboBox()
-        self.combo_type.addItems(["FLOAT", "INT16", "UINT16", "BOOL"])
-        if tag and tag.data_type in ["FLOAT", "INT16", "UINT16", "BOOL"]:
+        # Для Siemens список типов всё равно ограничивается размером адреса
+        # (_restrict_types_to_size), а полный набор актуален для modbus.
+        # BYTE (get_byte) и DWORD (get_dword) умеет читать только snap7.
+        types = BASE_DATA_TYPES + (S7_EXTRA_DATA_TYPES if self.is_s7 else [])
+        self.combo_type.addItems(types)
+        if tag and tag.data_type in types:
             self.combo_type.setCurrentText(tag.data_type)
 
         # Проверка адреса при вводе: размер чтения зависит и от адреса, и от типа
-        self.txt_addr.textChanged.connect(lambda _=None: self._validate_address())
-        self.combo_type.currentTextChanged.connect(lambda _=None: self._validate_address())
+        self.txt_addr.textChanged.connect(self._on_addr_text_changed)
+        self.combo_type.currentTextChanged.connect(self._on_type_changed)
 
         self.spin_scale = QDoubleSpinBox()
         self.spin_scale.setRange(-100000.0, 100000.0)
@@ -127,9 +206,17 @@ class TagEditDialog(QDialog):
         layout.addRow("📁 Группа (Group):", self.combo_group)
         layout.addRow("Адрес регистра (Address):", self.txt_addr)
 
+        if self.is_s7:
+            self._build_s7_address_widgets(layout)
+
         self.lbl_addr_hint = QLabel(hint or "Адрес сигнала в формате драйвера")
         self.lbl_addr_hint.setWordWrap(True)
-        self.lbl_addr_hint.setStyleSheet("color: #9CDCFE; font-size: 11px; padding-left: 2px;")
+        # Цвет подсказки зависит от состояния валидации (_addr_state) и темы
+        self._addr_state = "hint"
+        self._restyle_addr_hint = theme.themed(
+            self.lbl_addr_hint, lambda p: theme.hint_qss(p, self._addr_state))
+        self._restyle_addr_field = theme.themed(
+            self.txt_addr, lambda p: theme.field_error_qss(p) if self._addr_state == "error" else "")
         layout.addRow("", self.lbl_addr_hint)
 
         layout.addRow("Тип данных (Type):", self.combo_type)
@@ -139,7 +226,7 @@ class TagEditDialog(QDialog):
 
         btn_box = QHBoxLayout()
         btn_ok = QPushButton("Сохранить")
-        btn_ok.setStyleSheet(self.btn_ok_style)
+        theme.themed(btn_ok, OK_BTN_QSS)
         btn_ok.clicked.connect(self._on_accept)
         btn_cancel = QPushButton("Отмена")
         btn_cancel.clicked.connect(self.reject)
@@ -149,8 +236,222 @@ class TagEditDialog(QDialog):
 
         self._validate_address()
 
+    # ------------------------------------------------------- S7 адрес-конструктор
+    def _build_s7_address_widgets(self, layout: QFormLayout):
+        """
+        Виджеты выбора адреса S7. Результат всегда попадает в txt_addr,
+        поэтому валидация и сохранение работают по прежним правилам.
+        """
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 2, 0, 2)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(6)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(3, 1)
+
+        self.combo_area = QComboBox()
+        for code, label in S7_AREAS:
+            self.combo_area.addItem(label, code)
+
+        self.spin_db = QSpinBox()
+        self.spin_db.setRange(1, 9999)
+        self.spin_db.setPrefix("DB")
+        self.spin_db.setMinimumWidth(90)
+
+        self.combo_size = QComboBox()
+        for letter, label in S7_SIZES:
+            self.combo_size.addItem(label, letter)
+        self._set_if(self.combo_size, "W")   # типичный старт: слово (INT16)
+        self.combo_size.setMinimumWidth(110)
+
+        self.spin_byte = QSpinBox()
+        self.spin_byte.setRange(0, 65535)
+        self.spin_byte.setMinimumWidth(90)
+
+        self.combo_bit = QComboBox()
+        for b in range(8):
+            # data обязателен: обратный разбор ищет бит через findData
+            self.combo_bit.addItem(str(b), str(b))
+        self.combo_bit.setMinimumWidth(110)
+
+        # Явная высота: без неё QFormLayout сжимает поля конструктора до ~18px,
+        # и стрелки спинбокса (вверх/вниз) становятся почти недостижимыми —
+        # приходится попадать узкой кнопкой сбоку. 30px дают нормальные кнопки.
+        for w in (self.combo_area, self.spin_db, self.combo_size,
+                  self.spin_byte, self.combo_bit):
+            w.setMinimumHeight(30)
+
+        # Подписи-соседи нужны для синхронной видимости: только поле спрятать
+        # нельзя — осталась бы сиротная подпись
+        self.lbl_db = QLabel("Номер DB:")
+        self.lbl_bit = QLabel("Бит:")
+        grid.addWidget(QLabel("Область:"), 0, 0)
+        grid.addWidget(self.combo_area, 0, 1, 1, 3)
+        grid.addWidget(self.lbl_db, 1, 0)
+        grid.addWidget(self.spin_db, 1, 1)
+        grid.addWidget(QLabel("Размер:"), 1, 2)
+        grid.addWidget(self.combo_size, 1, 3)
+        grid.addWidget(QLabel("Смещение:"), 2, 0)
+        grid.addWidget(self.spin_byte, 2, 1)
+        grid.addWidget(self.lbl_bit, 2, 2)
+        grid.addWidget(self.combo_bit, 2, 3)
+
+        box = QWidget()
+        box.setLayout(grid)
+        # Фиксируем высоту контейнера по содержимому, чтобы layout не сжимал строки
+        box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        layout.addRow("🧩 Конструктор S7:", box)
+
+        self.combo_area.currentIndexChanged.connect(self._s7_parts_changed)
+        self.combo_size.currentIndexChanged.connect(self._s7_parts_changed)
+        self.combo_bit.currentIndexChanged.connect(self._s7_parts_changed)
+        self.spin_db.valueChanged.connect(self._s7_parts_changed)
+        self.spin_byte.valueChanged.connect(self._s7_parts_changed)
+
+        # Первичная загрузка: под guard'ом, иначе промежуточные значения
+        # спина/комбо вызвали бы _s7_parts_changed и испортили тип и адрес
+        self._syncing = True
+        try:
+            loaded = self._s7_load_from_text(self.txt_addr.text())
+        finally:
+            self._syncing = False
+        if loaded:
+            # Тип при редактировании не трогаем, но список ограниняем размером
+            self._restrict_types_to_size(self.combo_size.currentData())
+            self._s7_update_gating()
+        elif self.tag is None:
+            # Новый тег: генерируем разумный адрес по умолчанию. Существующий с
+            # неразборным адресом оставляем как есть — иначе потеряли бы данные.
+            self._s7_parts_changed()
+
+    def _restrict_types_to_size(self, size: str):
+        """
+        В списке типов оставляем только те, что драйвер реально читает из
+        адреса данного размера (B -> BYTE, W -> INT16/UINT16,
+        D -> FLOAT/DWORD, X -> BOOL). Текущий тип сохраняем, если он совместим.
+        """
+        allowed = SIZE_TYPES.get(size, ())
+        if not allowed:
+            return
+        current = [self.combo_type.itemText(i)
+                   for i in range(self.combo_type.count())]
+        if tuple(current) != tuple(allowed):
+            keep = self.combo_type.currentText()
+            self.combo_type.blockSignals(True)
+            self.combo_type.clear()
+            self.combo_type.addItems(allowed)
+            if keep in allowed:
+                self.combo_type.setCurrentText(keep)
+            self.combo_type.blockSignals(False)
+
+    def _s7_load_from_text(self, address: str) -> bool:
+        """
+        Заполняет конструктор из строки адреса (обратный разбор).
+        Возвращает False, если адрес не разбирается.
+        """
+        from drivers.snap7_driver import parse_s7_address
+
+        addr = parse_s7_address(address, self.combo_type.currentText())
+        if addr is None:
+            return False
+
+        if addr.kind == "DB":
+            area_code, db_num = "DB", addr.db
+        else:
+            area_code = LETTER_BY_AREA.get(addr.area, "M")
+            db_num = 1
+
+        self._set_if(self.combo_area, area_code)
+        self.spin_db.setValue(max(1, db_num))
+        self._set_if(self.combo_size, addr.size)
+        self.spin_byte.setValue(addr.offset)
+        self._set_if(self.combo_bit, str(addr.bit))
+        return True
+
+    @staticmethod
+    def _set_if(combo, value):
+        idx = combo.findData(value)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+
+    def _s7_parts_changed(self, _=None):
+        """Части -> строка адреса; одновременно подстраиваем тип данных."""
+        if self._syncing:
+            return
+        self._syncing = True
+        try:
+            area = self.combo_area.currentData()
+            size = self.combo_size.currentData()
+            offset = self.spin_byte.value()
+
+            if area == "DB":
+                base = f"DB{self.spin_db.value()}.DB{size}{offset}"
+            else:
+                base = f"{area}{size}{offset}"
+            full = f"{base}.{self.combo_bit.currentText()}" if size == "X" else base
+
+            self.txt_addr.setText(full)
+
+            # Тип: только те варианты, которые драйвер реально читает из адреса
+            # выбранного размера
+            self._restrict_types_to_size(size)
+
+            # Номер DB имеет смысл только для DB, бит — только для X:
+            # ненужные поля скрываем вместе с подписями
+            self._s7_update_gating()
+        finally:
+            self._syncing = False
+
+        # При первичной сборке виджеты подсказки ещё не созданы
+        if hasattr(self, "lbl_addr_hint"):
+            self._validate_address()
+
+    def _s7_update_gating(self):
+        """Показываем только те поля конструктора, что участвуют в адресе."""
+        is_db = self.combo_area.currentData() == "DB"
+        is_x = self.combo_size.currentData() == "X"
+        self.lbl_db.setVisible(is_db)
+        self.spin_db.setVisible(is_db)
+        self.lbl_bit.setVisible(is_x)
+        self.combo_bit.setVisible(is_x)
+
+    def _on_addr_text_changed(self, _=None):
+        """Ручной ввод в поле адреса: разбираем и отражаем в конструкторе."""
+        if self._syncing:
+            return
+        if self.is_s7:
+            self._syncing = True
+            try:
+                loaded = self._s7_load_from_text(self.txt_addr.text())
+            finally:
+                self._syncing = False
+            if loaded:
+                # ВАЖНО: адрес не пересобираем через _s7_parts_changed —
+                # setText сбросил бы курсор в конец и сорвал ручной ввод
+                # (например правку номера в DB87.DBX88.7). Конструктор уже
+                # обновлён разбором, осталось подогнать список типов и видимость
+                self._restrict_types_to_size(self.combo_size.currentData())
+                self._s7_update_gating()
+        self._validate_address()
+
+    def _on_type_changed(self, _=None):
+        """Выбор типа: подсказываем минимально подходящий размер адреса."""
+        if self._syncing:
+            self._validate_address()
+            return
+        if self.is_s7:
+            want = SIZE_BY_TYPE.get(self.combo_type.currentText())
+            if want and self.combo_size.currentData() != want:
+                # Рекурсия не возникает: _s7_parts_changed меняет тип только
+                # когда он несовместим с размером, а здесь как раз совместимый
+                self._set_if(self.combo_size, want)
+        self._validate_address()
+
     def _validate_address(self) -> bool:
         """Подсвечивает поле и показывает текст ошибки для неразборного адреса."""
+        # Виджеты ещё не собраны (идёт первичная инициализация) — не на что выводить
+        if not hasattr(self, "lbl_addr_hint"):
+            return True
         address = self.txt_addr.text().strip()
         data_type = self.combo_type.currentText()
         error = None
@@ -158,15 +459,16 @@ class TagEditDialog(QDialog):
             error = self.driver_class.validate_address(address, data_type)
 
         if error:
-            self.txt_addr.setStyleSheet(
-                "QLineEdit { background-color: #3A2A2A; border: 1px solid #C7595E; color: #FFFFFF; }")
-            self.lbl_addr_hint.setStyleSheet("color: #E08A8A; font-size: 11px; padding-left: 2px;")
+            self._addr_state = "error"
             self.lbl_addr_hint.setText("⚠ " + error)
+            self._restyle_addr_hint()
+            self._restyle_addr_field()
             return False
 
-        self.txt_addr.setStyleSheet("")
-        self.lbl_addr_hint.setStyleSheet("color: #7FBD8A; font-size: 11px; padding-left: 2px;")
+        self._addr_state = "ok"
         self.lbl_addr_hint.setText("✓ Адрес разобран корректно." + (f" {self.addr_hint}" if self.addr_hint else ""))
+        self._restyle_addr_hint()
+        self._restyle_addr_field()
         return True
 
     def _on_accept(self):
@@ -307,19 +609,7 @@ class ConnectionDialog(QDialog):
         self.conn = conn
         self.setWindowTitle("Редактирование подключения" if conn else "Новое подключение")
         self.setFixedWidth(400)
-        self.setStyleSheet("""
-            QDialog { background-color: #252526; color: white; }
-            QLabel { color: white; font-size: 12px; }
-            QLineEdit, QComboBox, QSpinBox {
-                background-color: #2D2D30; color: white; border: 1px solid #55555A;
-                border-radius: 4px; padding: 4px 6px; font-size: 12px;
-            }
-            QPushButton {
-                background-color: #49657A; color: white; border: 1px solid #55555A;
-                border-radius: 4px; padding: 5px 14px; font-weight: bold; font-size: 12px;
-            }
-            QPushButton:hover { background-color: #5A778D; border-color: #718A99; }
-        """)
+        theme.themed(self, lambda p: theme.fill(CONN_DIALOG_QSS, p) + theme.spin_qss(p))
 
         layout = QFormLayout(self)
         cfg = conn.config if (conn and isinstance(conn.config, dict)) else {}
@@ -389,7 +679,7 @@ class ConnectionDialog(QDialog):
             "показаны в статусе модуля на вкладке I/O Configuration."
         )
         lbl_poll_hint.setWordWrap(True)
-        lbl_poll_hint.setStyleSheet("color: #9CDCFE; font-size: 11px; padding-left: 2px;")
+        theme.themed(lbl_poll_hint, lambda p: theme.hint_qss(p, "hint"))
         layout.addRow("", lbl_poll_hint)
 
         self.combo_type.currentIndexChanged.connect(
@@ -399,7 +689,7 @@ class ConnectionDialog(QDialog):
 
         btn_box = QHBoxLayout()
         btn_ok = QPushButton("Сохранить" if conn else "Создать")
-        btn_ok.setStyleSheet("background-color: #49657A; color: white;")
+        theme.themed(btn_ok, f"background-color: {S('btn_action')}; color: {S('text')};")
         btn_ok.clicked.connect(self.accept)
         btn_cancel = QPushButton("Отмена")
         btn_cancel.clicked.connect(self.reject)
@@ -453,6 +743,9 @@ class ConnectionDialog(QDialog):
         }
 
 class IOWidget(QWidget):
+    # конфигурация тегов изменилась (добавление/удаление/редактирование/перемещение)
+    tags_changed = pyqtSignal()
+
     def __init__(self, db_service: DatabaseService, driver_manager, parent=None):
         super().__init__(parent)
         self.db = db_service
@@ -474,6 +767,7 @@ class IOWidget(QWidget):
             self.dm.reload_tags()
         except Exception:
             pass
+        self.tags_changed.emit()
 
     def _init_ui(self):
         layout = QHBoxLayout(self)
@@ -487,28 +781,28 @@ class IOWidget(QWidget):
         left_layout.setSpacing(6)
 
         lbl_tree = QLabel("**Дерево I/O:**")
-        lbl_tree.setStyleSheet("color: white; font-size: 13px;")
+        theme.themed(lbl_tree, f"color: {S('text')}; font-size: 13px;")
         left_layout.addWidget(lbl_tree)
 
         self.io_tree = DroppableTreeWidget(parent_widget=self)
         self.io_tree.setHeaderHidden(True)
-        self.io_tree.setStyleSheet("""
-            QTreeWidget { background: #252526; color: white; border: 1px solid #3F3F46; font-size: 12px; }
-            QTreeWidget::item { padding: 4px; border-bottom: 1px solid #2D2D30; }
-            QTreeWidget::item:selected { background: #007ACC; }
+        theme.themed(self.io_tree, """
+            QTreeWidget { background: {%panel%}; color: {%text%}; border: 1px solid {%border_soft%}; font-size: 12px; }
+            QTreeWidget::item { padding: 4px; border-bottom: 1px solid {%border_muted%}; }
+            QTreeWidget::item:selected { background: {%selection%}; color: {%selection_text%}; }
         """)
         self.io_tree.currentItemChanged.connect(self._on_tree_selection_changed)
         left_layout.addWidget(self.io_tree)
 
         box_conn_btns = QHBoxLayout()
         self.btn_add_conn = QPushButton("➕ Модуль")
-        self.btn_add_conn.setStyleSheet("background-color: #466653; color: white; font-weight: bold;")
+        theme.themed(self.btn_add_conn, theme.btn_qss("add"))
         self.btn_add_conn.clicked.connect(self._add_conn)
         self.btn_edit_conn = QPushButton("✏ Модуль")
-        self.btn_edit_conn.setStyleSheet("background-color: #665477; color: white; font-weight: bold;")
+        theme.themed(self.btn_edit_conn, theme.btn_qss("violet"))
         self.btn_edit_conn.clicked.connect(self._edit_conn)
         self.btn_del_conn = QPushButton("✕ Модуль")
-        self.btn_del_conn.setStyleSheet("background-color: #7A4B50; color: white; font-weight: bold;")
+        theme.themed(self.btn_del_conn, theme.btn_qss("danger"))
         self.btn_del_conn.clicked.connect(self._del_conn)
         box_conn_btns.addWidget(self.btn_add_conn)
         box_conn_btns.addWidget(self.btn_edit_conn)
@@ -517,15 +811,15 @@ class IOWidget(QWidget):
 
         box_grp_btns = QHBoxLayout()
         self.btn_add_grp = QPushButton("➕ Группа")
-        self.btn_add_grp.setStyleSheet("background-color: #466653; color: white; font-weight: bold;")
+        theme.themed(self.btn_add_grp, theme.btn_qss("add"))
         self.btn_add_grp.clicked.connect(self._add_group)
 
         self.btn_ren_grp = QPushButton("✏ Группа")
-        self.btn_ren_grp.setStyleSheet("background-color: #665477; color: white; font-weight: bold;")
+        theme.themed(self.btn_ren_grp, theme.btn_qss("violet"))
         self.btn_ren_grp.clicked.connect(self._rename_group)
 
         self.btn_del_grp = QPushButton("✕ Группа")
-        self.btn_del_grp.setStyleSheet("background-color: #7A4B50; color: white; font-weight: bold;")
+        theme.themed(self.btn_del_grp, theme.btn_qss("danger"))
         self.btn_del_grp.clicked.connect(self._del_group)
 
         box_grp_btns.addWidget(self.btn_add_grp)
@@ -535,11 +829,11 @@ class IOWidget(QWidget):
 
         box_tree_backup = QHBoxLayout()
         self.btn_export_all = QPushButton("📦 Экспорт дерева")
-        self.btn_export_all.setStyleSheet("background-color: #476B73; color: white; font-weight: bold;")
+        theme.themed(self.btn_export_all, theme.btn_qss("teal"))
         self.btn_export_all.clicked.connect(self._export_full_tree_json)
 
         self.btn_import_all = QPushButton("📥 Импорт дерева")
-        self.btn_import_all.setStyleSheet("background-color: #665477; color: white; font-weight: bold;")
+        theme.themed(self.btn_import_all, theme.btn_qss("violet"))
         self.btn_import_all.clicked.connect(self._import_full_tree_json)
 
         box_tree_backup.addWidget(self.btn_export_all)
@@ -555,37 +849,37 @@ class IOWidget(QWidget):
 
         right_header = QHBoxLayout()
         self.lbl_conn_title = QLabel("**Переменные**")
-        self.lbl_conn_title.setStyleSheet("color: white; font-size: 13px;")
+        theme.themed(self.lbl_conn_title, f"color: {S('text')}; font-size: 13px;")
         right_header.addWidget(self.lbl_conn_title)
         right_header.addStretch()
 
         self.btn_add_tag = QPushButton("➕ Переменная")
-        self.btn_add_tag.setStyleSheet("background-color: #49657A; color: white; border: 1px solid #647C8C; font-weight: bold;")
+        theme.themed(self.btn_add_tag, theme.btn_qss("action"))
         self.btn_add_tag.clicked.connect(self._add_tag)
         right_header.addWidget(self.btn_add_tag)
 
         self.btn_edit_tag = QPushButton("✏ Изменить")
-        self.btn_edit_tag.setStyleSheet("background-color: #665477; color: white; border: 1px solid #806B91; font-weight: bold;")
+        theme.themed(self.btn_edit_tag, theme.btn_qss("violet"))
         self.btn_edit_tag.clicked.connect(self._edit_tag)
         right_header.addWidget(self.btn_edit_tag)
 
         self.btn_copy_tag = QPushButton("⎘ Копировать")
-        self.btn_copy_tag.setStyleSheet("background-color: #466653; color: white; border: 1px solid #628570; font-weight: bold;")
+        theme.themed(self.btn_copy_tag, theme.btn_qss("add"))
         self.btn_copy_tag.clicked.connect(self._copy_last_tag)
         right_header.addWidget(self.btn_copy_tag)
 
         self.btn_del_tag = QPushButton("✕ Удалить")
-        self.btn_del_tag.setStyleSheet("background-color: #7A4B50; color: white; border: 1px solid #956168; font-weight: bold;")
+        theme.themed(self.btn_del_tag, theme.btn_qss("danger"))
         self.btn_del_tag.clicked.connect(self._del_tag)
         right_header.addWidget(self.btn_del_tag)
 
         self.btn_import_csv = QPushButton("📥 Импорт CSV")
-        self.btn_import_csv.setStyleSheet("background-color: #665477; color: white; border: 1px solid #806B91; font-weight: bold;")
+        theme.themed(self.btn_import_csv, theme.btn_qss("violet"))
         self.btn_import_csv.clicked.connect(self._import_csv)
         right_header.addWidget(self.btn_import_csv)
 
         self.btn_export_csv = QPushButton("📤 Экспорт CSV")
-        self.btn_export_csv.setStyleSheet("background-color: #476B73; color: white; border: 1px solid #64858A; font-weight: bold;")
+        theme.themed(self.btn_export_csv, theme.btn_qss("teal"))
         self.btn_export_csv.clicked.connect(self._export_csv)
         right_header.addWidget(self.btn_export_csv)
 
@@ -608,7 +902,7 @@ class IOWidget(QWidget):
         filter_row.addWidget(self.combo_tag_filter)
 
         self.lbl_tag_count = QLabel("")
-        self.lbl_tag_count.setStyleSheet("color: #9DA5B4; font-size: 12px;")
+        theme.themed(self.lbl_tag_count, f"color: {S('text_muted')}; font-size: 12px;")
         filter_row.addWidget(self.lbl_tag_count)
         filter_row.addStretch()
         right_layout.addLayout(filter_row)
@@ -624,10 +918,10 @@ class IOWidget(QWidget):
         header = self.tag_table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setStretchLastSection(False)
-        self.tag_table.setStyleSheet("""
-            QTableView { background: #1E1E1E; color: white; gridline-color: #333337; font-size: 12px; }
-            QHeaderView::section { background: #252526; color: white; font-weight: bold; border: 1px solid #3F3F46; padding: 4px; }
-            QTableView::item:selected { background-color: #3F596B; }
+        theme.themed(self.tag_table, """
+            QTableView { background: {%window%}; color: {%text%}; gridline-color: {%spin_btn%}; font-size: 12px; }
+            QHeaderView::section { background: {%panel%}; color: {%text%}; font-weight: bold; border: 1px solid {%border_soft%}; padding: 4px; }
+            QTableView::item:selected { background-color: {%handle%}; color: {%text%}; }
         """)
         self.tag_table.doubleClicked.connect(self._edit_tag)
         right_layout.addWidget(self.tag_table)
@@ -661,6 +955,7 @@ class IOWidget(QWidget):
                             (target_group, target_conn_id, tid))
             conn.commit()
             cur.close()
+        self._sync_registry()
         self.reload_tree(preserve_group=target_group)
 
     def reload_tree(self, preserve_group: str = None):
@@ -823,6 +1118,11 @@ class IOWidget(QWidget):
                 entries = {tid: (p.timestamp, p.value, p.quality)
                            for tid, p in changed.items()}
                 self.tag_model.apply_updates(entries)
+            # «Время обновления» должно тикать у КАЖДОГО опроса, а не только
+            # при смене значения. Обновляем колонку времени для видимых строк:
+            # реестр всегда хранит свежий timestamp последнего чтения, а
+            # перерисовка идёт лишь для того, что видно на экране.
+            self._refresh_visible_time(reg)
         else:
             try:
                 entries = self.db.get_tag_last_values()
@@ -835,6 +1135,46 @@ class IOWidget(QWidget):
         if self.tag_model.prune_recent() and self.tag_proxy.mode == TagFilterModel.MODE_CHANGED:
             self.tag_proxy.invalidateFilter()
         self._update_tag_count()
+
+    def _refresh_visible_time(self, reg):
+        """Освежает (ts,val,q) только для строк в видимой области таблицы."""
+        tbl = self.tag_table
+        vh = max(tbl.rowHeight(0), 1)
+        h = tbl.viewport().height()
+        if h <= 0:
+            return
+        seen, seen_rows = [], set()
+        y = 0
+        while y <= h:
+            proxy_row = tbl.rowAt(y)
+            if proxy_row is not None and proxy_row >= 0 and proxy_row not in seen_rows:
+                seen_rows.add(proxy_row)
+                src_row = self.tag_proxy.mapToSource(self.tag_proxy.index(proxy_row, 0)).row()
+                tag = self.tag_model.row_at(src_row)
+                if tag is not None:
+                    seen.append(tag.id)
+            y += vh
+        if not seen:
+            return
+        try:
+            entries = reg.read_values(seen)
+        except Exception:
+            return
+        if entries:
+            self.tag_model.apply_time_refresh(entries)
+
+    def _selected_tags(self):
+        """Все выделенные теги (для пакетного удаления)."""
+        sm = self.tag_table.selectionModel()
+        if sm is None:
+            return []
+        out = []
+        for proxy in sm.selectedRows():
+            src = self.tag_proxy.mapToSource(proxy)
+            tag = self.tag_model.row_at(src.row())
+            if tag is not None:
+                out.append(tag)
+        return out
 
     def _selected_tag(self):
         """Тег из выделенной строки с учётом сортировки/фильтра."""
@@ -1106,17 +1446,43 @@ class IOWidget(QWidget):
 
         c = data["conn"]
         group_name = data["group"]
-        
-        reply = QMessageBox.question(
-            self, "Удаление группы",
-            f"Удалить группу '{group_name}'?\n\n- Да: удалить группу и переместить переменные (если есть) в 'Общие'\n- Отмена: оставить всё без изменений",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
-        )
 
-        if reply == QMessageBox.StandardButton.Yes:
+        n_tags = self.db.get_group_counts_by_connection(c.id).get(group_name, 0)
+        if n_tags:
+            hint = (
+                f"В группе '{group_name}' {n_tags} перем.:\n\n"
+                f"- «Удалить с тегами»: группа и все её переменные (и история) исчезнут\n"
+                f"- «В Общие»: переменные переедут в группу 'Общие', удалится только папка\n"
+                f"- «Отмена»: ничего не меняется"
+            )
+        else:
+            hint = f"Удалить пустую группу '{group_name}'?"
+
+        # addButton(text, <ButtonRole>): роль — не StandardButton, иначе
+        # PyQt6 бросает TypeError и удаление группы вообще не выполняется.
+        box = QMessageBox(self)
+        box.setWindowTitle("Удаление группы")
+        box.setText(hint)
+        btn_with = (box.addButton("Удалить с тегами",
+                                 QMessageBox.ButtonRole.DestructiveRole)
+                    if n_tags else None)
+        btn_move = box.addButton("В Общие" if n_tags else "Удалить",
+                                 QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        clicked = box.clickedButton()
+
+        if clicked is btn_with:
+            self.db.delete_group(c.id, group_name, with_tags=True)
+            self._sync_registry()
+        elif clicked is btn_move:
             self.db.delete_group(c.id, group_name)
             self._sync_registry()
-            self.reload_tree()
+
+        if self.selected_group == group_name:
+            self.selected_group = None
+            self.reload_tags(c.id, group_filter=None)
+        self.reload_tree()
 
     def _add_conn(self):
         dlg = ConnectionDialog(parent=self)
@@ -1195,17 +1561,26 @@ class IOWidget(QWidget):
             self.reload_tree(preserve_group=updated.group_name)
 
     def _del_tag(self):
-        tag = self._selected_tag()
-        if tag is None:
+        tags = self._selected_tags()
+        if not tags:
             return
-        res = QMessageBox.question(self, "Удаление", f"Удалить переменную '{tag.name}'?")
-        if res == QMessageBox.StandardButton.Yes:
-            self.db.delete_tag(tag.id)
+        if len(tags) == 1:
+            msg = f"Удалить переменную '{tags[0].name}'?"
+        else:
+            names = ", ".join(t.name for t in tags[:8])
+            if len(tags) > 8:
+                names += f", … (+{len(tags) - 8})"
+            msg = f"Удалить выбранные переменные ({len(tags)} шт.)?\n{names}"
+        res = QMessageBox.question(self, "Удаление", msg)
+        if res != QMessageBox.StandardButton.Yes:
+            return
+        self.db.delete_tags([t.id for t in tags])
+        for t in tags:
             try:
-                self.dm.registry.drop(tag.id)
+                self.dm.registry.drop(t.id)
             except Exception:
                 pass
-            self.reload_tree(preserve_group=self.selected_group)
+        self.reload_tree(preserve_group=self.selected_group)
 
     # ------------------------------------------------------------ copy tag
     @staticmethod
@@ -1242,7 +1617,9 @@ class IOWidget(QWidget):
         if not m:
             return addr
         bit = int(m.group(7) or 0)
-        size_letter = m.group(2) or m.group(5) or {"FLOAT": "D", "BOOL": "X"}.get((data_type or "").upper(), "W")
+        size_letter = (m.group(2) or m.group(5)
+                       or {"FLOAT": "D", "DWORD": "D", "BOOL": "X",
+                           "BYTE": "B"}.get((data_type or "").upper(), "W"))
         byte_len = {"W": 2, "B": 1, "D": 4, "X": 1}[size_letter]
 
         if size_letter == "X":

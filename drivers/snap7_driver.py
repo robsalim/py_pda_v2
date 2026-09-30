@@ -43,7 +43,9 @@ AREA_BY_LETTER = {
 SIZE_BY_LETTER = {"W": 2, "B": 1, "D": 4, "X": 1}
 
 # Размер по умолчанию, если буква размера в адресе не указана
-SIZE_BY_DATA_TYPE = {"FLOAT": "D", "INT16": "W", "UINT16": "W", "BOOL": "X"}
+# BYTE: беззнаковый байт (get_byte), DWORD: беззнаковое 32-битное (get_dword)
+SIZE_BY_DATA_TYPE = {"FLOAT": "D", "INT16": "W", "UINT16": "W",
+                     "BOOL": "X", "BYTE": "B", "DWORD": "D"}
 
 
 @dataclass
@@ -125,13 +127,14 @@ class Snap7Driver(BaseDriver):
 
     ADDRESS_EXAMPLES = [
         ("MW230", "INT16", "Merker word — 2 байта, начиная с MB230"),
-        ("MB5", "UINT16", "Merker byte — 1 байт MB5"),
+        ("MB5", "BYTE", "Merker byte — 1 байт MB5"),
         ("MD100", "FLOAT", "Merker dword — 4 байта MD100 (REAL)"),
         ("MX3.4", "BOOL", "Бит 4 в байте MB3"),
         ("IW64", "INT16", "Образ входа (I), 2 байта с IW64"),
         ("QW0", "INT16", "Образ выхода (Q), 2 байта с QW0"),
         ("DB1.DBW4", "INT16", "Слово в блоке данных DB1, смещение 4"),
         ("DB5.DBD0", "FLOAT", "Real в DB5, смещение 0"),
+        ("DB5.DBD0", "DWORD", "Беззнаковое 32-битное в DB5, смещение 0"),
         ("DB1.DBX0.0", "BOOL", "Бит 0 в байте 0 блока DB1"),
     ]
 
