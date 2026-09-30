@@ -20,6 +20,7 @@ from drivers.base_driver import BaseDriver
 # загрузку моделей (Connection вызывает normalize_driver_type).
 DRIVER_ENTRY_POINTS: Dict[str, str] = {
     "snap7": "drivers.snap7_driver:Snap7Driver",
+    "snap7_s200": "drivers.snap7_s200_driver:Snap7S200Driver",
     "modbus_client": "drivers.modbus_client_driver:ModbusClientDriver",
     "modbus_server": "drivers.modbus_server_driver:ModbusServerDriver",
 }
@@ -27,6 +28,7 @@ DRIVER_ENTRY_POINTS: Dict[str, str] = {
 # Ключ -> подпись для интерфейса.
 DRIVER_LABELS: Dict[str, str] = {
     "snap7": "snap7 (Siemens S7-300/400/1200/1500)",
+    "snap7_s200": "snap7 (Siemens S7-200 SMART, V-память)",
     "modbus_client": "pymodbus (Modbus TCP Client)",
     "modbus_server": "pymodbus (Modbus TCP Server)",
 }
@@ -40,6 +42,14 @@ LEGACY_DRIVER_TYPES: Dict[str, str] = {
     "siemens_s7": "snap7",
     "siemens": "snap7",
     "s7": "snap7",
+    "s7_200": "snap7_s200",
+    "s7-200": "snap7_s200",
+    "s7_200_smart": "snap7_s200",
+    "s7-200-smart": "snap7_s200",
+    "s7-200 smart": "snap7_s200",
+    "s7 200 smart": "snap7_s200",
+    "snap7_s200_smart": "snap7_s200",
+    "snap7-s200": "snap7_s200",
 }
 
 _class_cache: Dict[str, Type[BaseDriver]] = {}

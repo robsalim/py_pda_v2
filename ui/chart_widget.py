@@ -165,7 +165,7 @@ class ChartWidget(QWidget):
         header1.addWidget(self.btn_clear)
 
         self.btn_export_pdf = QPushButton("PDF")
-        theme.themed(self.btn_export_pdf, "background-color: {%btn_teal%}; color: {%text%}; border: 1px solid {%btn_teal_border%}; border-radius: 4px; padding: 4px 10px; font-weight: bold;")
+        theme.themed(self.btn_export_pdf, "background-color: {%btn_teal%}; color: {%btn_teal_text%}; border: 1px solid {%btn_teal_border%}; border-radius: 4px; padding: 4px 10px; font-weight: bold;")
         self.btn_export_pdf.setToolTip("Экспорт графика с легендой в PDF")
         self.btn_export_pdf.clicked.connect(self._export_pdf)
         header1.addWidget(self.btn_export_pdf)
@@ -174,7 +174,7 @@ class ChartWidget(QWidget):
             self.btn_close = QPushButton("×")
             self.btn_close.setFixedSize(24, 24)
             self.btn_close.setToolTip("Закрыть график")
-            theme.themed(self.btn_close, "background-color: {%btn_danger%}; color: {%text%}; border: 1px solid {%btn_danger_border%}; border-radius: 4px; font-weight: normal; font-size: 16px; padding: 0;")
+            theme.themed(self.btn_close, "background-color: {%btn_danger%}; color: {%btn_danger_text%}; border: 1px solid {%btn_danger_border%}; border-radius: 4px; font-weight: normal; font-size: 16px; padding: 0;")
             self.btn_close.clicked.connect(self.on_close_callback)
             header1.addWidget(self.btn_close)
         layout.addLayout(header1)

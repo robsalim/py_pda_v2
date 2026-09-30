@@ -25,13 +25,14 @@ from drivers.registry import (
     normalize_driver_type,
 )
 from drivers.snap7_driver import Snap7Driver
+from drivers.snap7_s200_driver import Snap7S200Driver
 
 # ---------------------------------------------------------------------------
 # Конструктор адреса Siemens S7
 # ---------------------------------------------------------------------------
 # Память S7 разбита на области; адрес = область + размер + смещение (+ бит).
-# Разумный набор областей ограничен тем, что реально читает драйвер
-# (AREA_BY_LETTER в drivers/snap7_driver.py).
+# Набор областей берётся из класса драйвера (ADDRESS_AREAS): у старших S7
+# это DB/M/I/Q, у S7-200 SMART вместо DB — V-память (VB/VW/VD, бит V100.3).
 S7_AREAS = [
     ("DB", "DB — блок данных"),
     ("M", "M — Merker (флаги)"),
@@ -46,6 +47,9 @@ S7_SIZES = [
     ("D", "D (4 байта)"),
     ("X", "X (бит)"),
 ]
+
+# Типы адресов snap7-семейства (старшие S7 и S7-200 SMART)
+SNAP7_DRIVER_TYPES = {Snap7Driver.DRIVER_TYPE, Snap7S200Driver.DRIVER_TYPE}
 
 # Размер однозначно диктует тип только для X/D/B; для W допустимы оба целых.
 # Иначе драйвер прочтёт не то (REAL в слове или INT16 в бите — классическая
@@ -93,7 +97,7 @@ def _dialog_qss(p):
         /* Стиль для ВСЕХ кнопок по умолчанию (с hover и pressed) */
         QPushButton {{
             background-color: {p.btn_action};
-            color: {p.text};
+            color: {p.btn_action_text};
             border: 1px solid {p.border};
             border-radius: 4px;
             padding: 5px 12px;
@@ -117,7 +121,7 @@ def _dialog_qss(p):
 
 
 OK_BTN_QSS = """
-    QPushButton { background-color: {%btn_action%}; color: {%text%}; border: 1px solid {%btn_action_border%}; font-weight: bold; border-radius: 4px; padding: 5px 12px; outline: none; }
+    QPushButton { background-color: {%btn_action%}; color: {%btn_action_text%}; border: 1px solid {%btn_action_border%}; font-weight: bold; border-radius: 4px; padding: 5px 12px; outline: none; }
     QPushButton:hover { background-color: {%btn_action_hover%}; }
     QPushButton:pressed { background-color: {%btn_action_pressed%}; }
 """
@@ -130,7 +134,7 @@ CONN_DIALOG_QSS = """
         border-radius: 4px; padding: 4px 6px; font-size: 12px;
     }
     QPushButton {
-        background-color: {%btn_action%}; color: {%text%}; border: 1px solid {%border%};
+        background-color: {%btn_action%}; color: {%btn_action_text%}; border: 1px solid {%btn_action_border%};
         border-radius: 4px; padding: 5px 14px; font-weight: bold; font-size: 12px;
     }
     QPushButton:hover { background-color: {%btn_action_hover%}; border-color: {%btn_action_border_hover%}; }
@@ -154,7 +158,7 @@ class TagEditDialog(QDialog):
         self.driver_type = normalize_driver_type(driver_type) if driver_type else None
         self.driver_class = get_driver_class(self.driver_type) if self.driver_type else None
         self.setWindowTitle("Редактирование переменной" if tag else "Создать переменную")
-        self.is_s7 = self.driver_type == "snap7"
+        self.is_s7 = self.driver_type in SNAP7_DRIVER_TYPES
         self.setFixedWidth(560 if self.is_s7 else 440)
         # Базовый стиль виджета и всех дочерних элементов по умолчанию
         theme.themed(self, _dialog_qss)
@@ -241,6 +245,8 @@ class TagEditDialog(QDialog):
         """
         Виджеты выбора адреса S7. Результат всегда попадает в txt_addr,
         поэтому валидация и сохранение работают по прежним правилам.
+        Набор областей берётся из класса драйвера: DB/M/I/Q у старших S7,
+        V/M/I/Q у S7-200 SMART (V-память читается как DB1).
         """
         grid = QGridLayout()
         grid.setContentsMargins(0, 2, 0, 2)
@@ -249,8 +255,9 @@ class TagEditDialog(QDialog):
         grid.setColumnStretch(1, 1)
         grid.setColumnStretch(3, 1)
 
+        self._s7_areas = list(getattr(self.driver_class, "ADDRESS_AREAS", S7_AREAS))
         self.combo_area = QComboBox()
-        for code, label in S7_AREAS:
+        for code, label in self._s7_areas:
             self.combo_area.addItem(label, code)
 
         self.spin_db = QSpinBox()
@@ -349,13 +356,18 @@ class TagEditDialog(QDialog):
         Заполняет конструктор из строки адреса (обратный разбор).
         Возвращает False, если адрес не разбирается.
         """
-        from drivers.snap7_driver import parse_s7_address
+        parser = getattr(self.driver_class, "parse_address", None)
+        if parser is None:
+            from drivers.snap7_driver import parse_s7_address as parser
 
-        addr = parse_s7_address(address, self.combo_type.currentText())
+        addr = parser(address, self.combo_type.currentText())
         if addr is None:
             return False
 
-        if addr.kind == "DB":
+        if getattr(addr, "v_area", False):
+            # V-память SMART: физически это DB1, но в конструкторе — область V
+            area_code, db_num = "V", addr.db
+        elif addr.kind == "DB":
             area_code, db_num = "DB", addr.db
         else:
             area_code = LETTER_BY_AREA.get(addr.area, "M")
@@ -386,6 +398,9 @@ class TagEditDialog(QDialog):
 
             if area == "DB":
                 base = f"DB{self.spin_db.value()}.DB{size}{offset}"
+            elif area == "V":
+                # V-память SMART: бит пишется как V100.3, без буквы X
+                base = f"V{'' if size == 'X' else size}{offset}"
             else:
                 base = f"{area}{size}{offset}"
             full = f"{base}.{self.combo_bit.currentText()}" if size == "X" else base
@@ -629,7 +644,7 @@ class ConnectionDialog(QDialog):
         
         self.spin_port = QSpinBox()
         self.spin_port.setRange(1, 65535)
-        default_port = 102 if self.combo_type.currentData() == Snap7Driver.DRIVER_TYPE else 502
+        default_port = 102 if self.combo_type.currentData() in SNAP7_DRIVER_TYPES else 502
         self.spin_port.setValue(cfg.get("port", default_port))
 
         self.spin_rack = QSpinBox()
@@ -689,7 +704,7 @@ class ConnectionDialog(QDialog):
 
         btn_box = QHBoxLayout()
         btn_ok = QPushButton("Сохранить" if conn else "Создать")
-        theme.themed(btn_ok, f"background-color: {S('btn_action')}; color: {S('text')};")
+        theme.themed(btn_ok, f"background-color: {S('btn_action')}; color: {S('btn_action_text')};")
         btn_ok.clicked.connect(self.accept)
         btn_cancel = QPushButton("Отмена")
         btn_cancel.clicked.connect(self.reject)
@@ -698,7 +713,7 @@ class ConnectionDialog(QDialog):
         layout.addRow(btn_box)
 
     def _on_driver_type_changed(self, dtype: str):
-        if dtype == Snap7Driver.DRIVER_TYPE:
+        if dtype in SNAP7_DRIVER_TYPES:
             self.spin_port.setValue(102)
             self.row_rack_label.show()
             self.spin_rack.show()
@@ -729,7 +744,7 @@ class ConnectionDialog(QDialog):
             "ip": self.txt_ip.text().strip(),
             "port": self.spin_port.value()
         }
-        if dtype == Snap7Driver.DRIVER_TYPE:
+        if dtype in SNAP7_DRIVER_TYPES:
             config["rack"] = self.spin_rack.value()
             config["slot"] = self.spin_slot.value()
         elif dtype == "modbus_client":
@@ -1603,7 +1618,8 @@ class IOWidget(QWidget):
         """
         Адрес клона: следующий элемент того же типа.
         Modbus — целочисленный регистр (+1, у FLOAT две ячейки),
-        S7 — смещение на размер чтения (DB1.DBW4 -> DB1.DBW6, бит -> следующий).
+        S7 — смещение на размер чтения (DB1.DBW4 -> DB1.DBW6, VW100 -> VW102,
+        бит -> следующий).
         """
         addr = (address or "").strip()
 
@@ -1611,27 +1627,33 @@ class IOWidget(QWidget):
             step = 2 if (data_type or "").upper() == "FLOAT" else 1
             return str(int(addr) + step)
 
-        # S7: DB1.DBW4 / DB1.DBX0.0 / MW230 / MX3.4
-        m = re.fullmatch(r"(?:DB(\d+)\.DB([WBXD])(\d+)|([MIEQ])([WBXD]?)(\d+))(?:\.(\d+))?",
+        # S7: DB1.DBW4 / DB1.DBX0.0 / MW230 / VW100 / V100.3 / MX3.4
+        # V — V-память S7-200 SMART; бит у SMART пишут без буквы X (V100.3)
+        m = re.fullmatch(r"(?:DB(\d+)\.DB([WBXD])(\d+)|([MVIEQ])([WBXD]?)(\d+))(?:\.(\d+))?",
                          addr.upper().replace("%", "").replace(" ", ""))
         if not m:
             return addr
         bit = int(m.group(7) or 0)
         size_letter = (m.group(2) or m.group(5)
                        or {"FLOAT": "D", "DWORD": "D", "BOOL": "X",
-                           "BYTE": "B"}.get((data_type or "").upper(), "W"))
+                          "BYTE": "B"}.get((data_type or "").upper(), "W"))
         byte_len = {"W": 2, "B": 1, "D": 4, "X": 1}[size_letter]
 
         if size_letter == "X":
             if bit < 7:
                 return addr[:len(addr) - 1] + str(bit + 1)
             bit = 0
-        else:
-            bit = 0
 
         if m.group(1):  # форма DB<n>.DBx<offset>
             prefix = f"DB{m.group(1)}.DB{size_letter}{int(m.group(3)) + byte_len}"
             return f"{prefix}.{bit}" if size_letter == "X" else prefix
+
+        # форма <область><размер><смещение> (V для SMART — без буквы X у бита)
+        area = m.group(4)
+        if area == "V" and size_letter == "X":
+            return f"{area}{int(m.group(6)) + byte_len}.{bit}"
+        prefix = f"{area}{size_letter}{int(m.group(6)) + byte_len}"
+        return f"{prefix}.{bit}" if size_letter == "X" else prefix
 
         # форма <область><размер><смещение>
         prefix = f"{m.group(4)}{size_letter}{int(m.group(6)) + byte_len}"

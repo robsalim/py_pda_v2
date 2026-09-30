@@ -50,12 +50,15 @@ SIZE_BY_DATA_TYPE = {"FLOAT": "D", "INT16": "W", "UINT16": "W",
 
 @dataclass
 class S7Address:
-    kind: str          # 'DB' — блок данных, 'AREA' — M / I / Q
+    kind: str          # 'DB' — блок данных, 'AREA' — M / I / Q (V-память — kind='DB', v_area=True)
     area: str          # для DB: DBD/DBW/DBB/DBX; для AREA: MK/PE/PA
     db: int            # номер DB (0 для M/I/Q)
     size: str          # W / B / D / X
     offset: int        # смещение в байтах
     bit: int = 0       # номер бита (только для X)
+    # True для V-памяти S7-200 SMART: читается как DB1, но в сообщениях
+    # об ошибках показывается исходный адрес VB/VW/VD, а не DB1.DBx
+    v_area: bool = False
 
     @property
     def byte_len(self) -> int:
@@ -125,6 +128,14 @@ class Snap7Driver(BaseDriver):
 
     ADDRESS_HINT = "Примеры: MW230, MD100, MX3.4, DB1.DBW4, DB1.DBD0, DB1.DBX0.0"
 
+    # Области памяти для конструктора адреса в GUI (код, подпись)
+    ADDRESS_AREAS = [
+        ("DB", "DB — блок данных"),
+        ("M", "M — Merker (флаги)"),
+        ("I", "I — образ входа"),
+        ("Q", "Q — образ выхода"),
+    ]
+
     ADDRESS_EXAMPLES = [
         ("MW230", "INT16", "Merker word — 2 байта, начиная с MB230"),
         ("MB5", "BYTE", "Merker byte — 1 байт MB5"),
@@ -137,6 +148,14 @@ class Snap7Driver(BaseDriver):
         ("DB5.DBD0", "DWORD", "Беззнаковое 32-битное в DB5, смещение 0"),
         ("DB1.DBX0.0", "BOOL", "Бит 0 в байте 0 блока DB1"),
     ]
+
+    @staticmethod
+    def parse_address(address: str, data_type: str = "INT16") -> Optional[S7Address]:
+        """
+        Точка переопределения для наследников: разбор адреса сигнала.
+        По умолчанию — адресация старших S7 (DB/M/I/Q).
+        """
+        return parse_s7_address(address, data_type)
 
     def __init__(self, connection: Connection, db_service: DatabaseService, registry=None):
         super().__init__(connection, db_service, registry=registry)
@@ -170,6 +189,13 @@ class Snap7Driver(BaseDriver):
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
+    def _connect_client(self):
+        """
+        Точка переопределения: установка соединения с ЦПУ.
+        По умолчанию — классический rack/slot (старшие S7).
+        """
+        self.client.connect(self.ip, self.rack, self.slot)
+
     def _run(self):
         self.status = "Connecting..."
         self.client = snap7.client.Client()
@@ -177,7 +203,7 @@ class Snap7Driver(BaseDriver):
         while self.is_running:
             if not self.client.get_connected():
                 try:
-                    self.client.connect(self.ip, self.rack, self.slot)
+                    self._connect_client()
                     self._refresh_pdu_length()
                     self._tags_at = 0.0
                     self.status = "Connected"
@@ -287,7 +313,7 @@ class Snap7Driver(BaseDriver):
         """
         addrs = []
         for t in tags:
-            a = parse_s7_address(t.address_str, t.data_type)
+            a = self.parse_address(t.address_str, t.data_type)
             if a is not None:
                 addrs.append((t, a))
         if not addrs:
@@ -340,7 +366,7 @@ class Snap7Driver(BaseDriver):
         """
         groups = {}
         for t in tags:
-            a = parse_s7_address(t.address_str, t.data_type)
+            a = self.parse_address(t.address_str, t.data_type)
             if a is None:
                 continue
             # Для DB область не важна — db_read читает любые размеры из одного
@@ -410,23 +436,24 @@ class Snap7Driver(BaseDriver):
             return get_uint(buf, rel) if tag.data_type == "UINT16" else get_int(buf, rel)
         return get_byte(buf, rel)
 
+    # Подсказка формата для сообщения об ошибке разбора адреса
+    ADDRESS_FORMATS_HINT = ("MW230, MB5, MD100, MX3.4, IW64, QW0, "
+                            "DB1.DBW4, DB5.DBD0, DB1.DBX0.0")
+
     @classmethod
     def validate_address(cls, address: str, data_type: str = "FLOAT") -> Optional[str]:
         base_err = super().validate_address(address, data_type)
         if base_err:
             return base_err
-        if parse_s7_address(address, data_type) is None:
-            return (
-                f"Не понимаю адрес '{address}'. Форматы: MW230, MB5, MD100, MX3.4, "
-                f"IW64, QW0, DB1.DBW4, DB5.DBD0, DB1.DBX0.0"
-            )
+        if cls.parse_address(address, data_type) is None:
+            return (f"Не понимаю адрес '{address}'. Форматы: {cls.ADDRESS_FORMATS_HINT}")
         return None
 
     # ------------------------------------------------------------------
     # Разбор адреса и чтение
     # ------------------------------------------------------------------
     def _read_tag(self, tag):
-        s7 = parse_s7_address(tag.address_str, tag.data_type)
+        s7 = self.parse_address(tag.address_str, tag.data_type)
         if s7 is None:
             self.last_error = f"Неизвестный формат адреса: '{tag.address_str}'"
             return None

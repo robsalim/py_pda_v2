@@ -24,3 +24,7 @@ dist/
 .DS_Store
 ui_theme.json
 rel_body.json
+
+# Артефакты предпросмотра (генерируются tools_*_preview.py в корне)
+tools_*_preview.py
+/*.png

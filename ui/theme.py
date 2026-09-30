@@ -60,20 +60,25 @@ class Palette:
     scrollbar_hover: str
     text_muted: str      # приглушённый сине-серый (счётчики, подписи)
     text_faint: str      # самый тусклый служебный текст
-    # Цветные кнопки действий
+    # Цветные кнопки действий (пастельные «чипсы»: светлый фон + цветной текст)
     btn_add: str
     btn_add_border: str
+    btn_add_text: str
     btn_action: str
     btn_action_border: str
+    btn_action_text: str
     btn_action_hover: str
     btn_action_pressed: str
     btn_action_border_hover: str
-    btn_violet: str
+    btn_violet: str           # стальная сине-серая (изменить/импорт)
     btn_violet_border: str
+    btn_violet_text: str
     btn_danger: str
     btn_danger_border: str
+    btn_danger_text: str
     btn_teal: str
     btn_teal_border: str
+    btn_teal_text: str
     chip_line: str       # крестик удаления в чипе легенды
     cursor_x1: str       # подписи и курсоры X1/X2/ΔT на графике
     cursor_x1_hover: str
@@ -103,13 +108,13 @@ DARK = Palette(
     scrollbar="#424242", scrollbar_hover="#686868",
     text_muted="#9DA5B4",
     text_faint="#858585",
-    btn_add="#466653", btn_add_border="#628570",
-    btn_action="#49657A", btn_action_border="#647C8C",
-    btn_action_hover="#5A778D", btn_action_pressed="#314653",
-    btn_action_border_hover="#718A99",
-    btn_violet="#665477", btn_violet_border="#806B91",
-    btn_danger="#7A4B50", btn_danger_border="#956168",
-    btn_teal="#476B73", btn_teal_border="#64858A",
+    btn_add="#24422F", btn_add_border="#3C6B4D", btn_add_text="#8FE0A8",
+    btn_action="#1E3A50", btn_action_border="#356180", btn_action_text="#8FCCF2",
+    btn_action_hover="#2A4C66", btn_action_pressed="#16303F",
+    btn_action_border_hover="#4A769A",
+    btn_violet="#35404C", btn_violet_border="#4E5C6C", btn_violet_text="#BAC7D3",
+    btn_danger="#4C2A2C", btn_danger_border="#714145", btn_danger_text="#F2A0A0",
+    btn_teal="#1E4247", btn_teal_border="#37636A", btn_teal_text="#8FD9D0",
     chip_line="#C8C8C8",
     cursor_x1="#FFD700", cursor_x1_hover="#FFE600",
     cursor_x2="#00E5FF", cursor_x2_hover="#80F3FF",
@@ -136,13 +141,13 @@ LIGHT = Palette(
     scrollbar="#C2C4C9", scrollbar_hover="#A2A5AB",
     text_muted="#5C6B7A",
     text_faint="#8A8F98",
-    btn_add="#5E8F6E", btn_add_border="#4E7B5C",
-    btn_action="#5B7C99", btn_action_border="#4C6A84",
-    btn_action_hover="#6D8EA9", btn_action_pressed="#466075",
-    btn_action_border_hover="#3F596E",
-    btn_violet="#8A6BA8", btn_violet_border="#71578A",
-    btn_danger="#C25E66", btn_danger_border="#A34F57",
-    btn_teal="#5F8B95", btn_teal_border="#4F767F",
+    btn_add="#E3F5E9", btn_add_border="#BFE3CB", btn_add_text="#1E7E34",
+    btn_action="#E1F0FB", btn_action_border="#C2DEF4", btn_action_text="#0B5FA5",
+    btn_action_hover="#CFE7F8", btn_action_pressed="#B5D9F2",
+    btn_action_border_hover="#9CC8E8",
+    btn_violet="#ECEEF1", btn_violet_border="#D5D9DF", btn_violet_text="#3F4C5A",
+    btn_danger="#FCE7E6", btn_danger_border="#F3C6C3", btn_danger_text="#B03A32",
+    btn_teal="#E0F2F1", btn_teal_border="#BFE0DD", btn_teal_text="#0E6F66",
     chip_line="#5A5A5A",
     cursor_x1="#8A6D00", cursor_x1_hover="#B58F00",
     cursor_x2="#0077A0", cursor_x2_hover="#009FD4",
@@ -229,11 +234,12 @@ def field_error_qss(p: Palette) -> str:
             f"border: 1px solid {p.error}; color: {p.text}; }}")
 
 
-# Вид action-кнопок: фоновая кнопка + тонкая рамка того же тона
+# Вид action-кнопки: пастельный «чипс» — светлый/приглушённый фон, тонкая рамка
+# того же тона и цветной текст (токен <base>_text)
 _BTN_KINDS = {
     "add": "btn_add",          # зелёная (создать/добавить)
     "action": "btn_action",    # синяя (главное действие)
-    "violet": "btn_violet",    # фиолетовая (изменить/импорт)
+    "violet": "btn_violet",    # стальная сине-серая (изменить/импорт)
     "danger": "btn_danger",    # красная (удалить)
     "teal": "btn_teal",        # сине-зелёная (экспорт/web/PDF)
     "neutral": "hover",        # серая (пауза)
@@ -243,7 +249,8 @@ _BTN_KINDS = {
 def btn_qss(kind: str, bold: bool = True, border: bool = True) -> str:
     """Шаблон QSS цветной кнопки с токенами (для themed/builders)."""
     base = _BTN_KINDS[kind]
-    parts = ["background-color: {%" + base + "%};", " color: {%text%};"]
+    fg = "{%text%}" if base == "hover" else "{%" + base + "_text%}"
+    parts = ["background-color: {%" + base + "%};", f" color: {fg};"]
     if border and base != "hover":
         parts.append(" border: 1px solid {%" + base + "_border%};")
     if bold:
@@ -259,7 +266,7 @@ COMBO_QSS = """
 """
 
 ACTION_BTN_QSS = """
-    QPushButton { background-color: {%btn_action%}; color: {%text%}; border: 1px solid {%btn_action_border_hover%}; border-radius: 4px; padding: 4px 10px; font-size: 12px; font-weight: bold; }
+    QPushButton { background-color: {%btn_action%}; color: {%btn_action_text%}; border: 1px solid {%btn_action_border_hover%}; border-radius: 4px; padding: 4px 10px; font-size: 12px; font-weight: bold; }
     QPushButton:hover { background-color: {%btn_action_hover%}; border-color: {%btn_action_border_hover%}; }
 """
 
@@ -269,7 +276,7 @@ DTEDIT_QSS = """
 """
 
 LOAD_BTN_QSS = """
-    QPushButton { background-color: {%btn_action%}; color: {%text%}; font-weight: bold; border-radius: 4px; padding: 5px 14px; font-size: 12px; border: 1px solid {%btn_action_hover%}; }
+    QPushButton { background-color: {%btn_action%}; color: {%btn_action_text%}; font-weight: bold; border-radius: 4px; padding: 5px 14px; font-size: 12px; border: 1px solid {%btn_action_border%}; }
     QPushButton:hover { background-color: {%btn_action_hover%}; }
 """
 
@@ -303,8 +310,8 @@ def spin_qss(p: Palette) -> str:
     out = SPIN_BUTTON_QSS
     for old, new in (
         ("#55555A", p.border), ("#3F3F46", p.border_soft),
-        ("#333337", p.spin_btn), ("#49657A", p.btn_action),
-        ("#FFFFFF", p.text),
+        ("#333337", p.spin_btn), ("#49657A", p.btn_action_hover),
+        ("#FFFFFF", p.text), ("#DDDDDD", p.text_dim),
     ):
         out = out.replace(old, new)
     return out

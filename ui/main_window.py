@@ -79,14 +79,14 @@ class MainWindow(QMainWindow):
 
         self.btn_add_chart = QPushButton("＋ Добавить график")
         theme.themed(self.btn_add_chart,
-                     f"background-color: {S('btn_add')}; color: {S('text')}; font-weight: bold;")
+                     f"background-color: {S('btn_add')}; color: {S('btn_add_text')}; font-weight: bold;")
         self.btn_add_chart.clicked.connect(self._add_chart)
         top_bar.addWidget(self.btn_add_chart)
 
         top_bar.addSpacing(20)
         self.btn_open_web = QPushButton("🌐 Открыть Web-клиент")
         theme.themed(self.btn_open_web,
-                     f"background-color: {S('btn_action')}; color: {S('text')};")
+                     f"background-color: {S('btn_action')}; color: {S('btn_action_text')};")
         self.btn_open_web.clicked.connect(lambda: webbrowser.open(f"http://localhost:{WEB_PORT}"))
         top_bar.addWidget(self.btn_open_web)
 
@@ -270,16 +270,22 @@ class MainWindow(QMainWindow):
         </ul>
 
         <h2>7. Bits</h2>
-        <p>Вкладка показывает 16 бит выбранного регистра отдельными дорожками.</p>
+        <p>Вкладка показывает биты выбранного регистра отдельными дорожками. Слева —
+        дерево сигналов, отфильтрованное по целочисленным типам 8-16 бит
+        (<code>BYTE</code>, <code>INT16</code>, <code>UINT16</code>): FLOAT, BOOL и
+        32-битные регистры в него не попадают, потому что разложить их на 16 дорожек
+        корректно нельзя.</p>
         <ul>
+          <li><code>BYTE</code> — 8 дорожек, <code>INT16</code>/<code>UINT16</code> — 16.</li>
           <li>Y-масштаб подстраивается под отображаемые битовые дорожки.</li>
           <li>Курсоры работают так же, как на обычном графике.</li>
           <li>Режим <b>Live</b> обновляет данные автоматически.</li>
           <li>Режим <b>Archive</b> позволяет просматривать исторический диапазон.</li>
+          <li>В web-клиенте (вкладка Bits) — такое же дерево сигналов с тем же фильтром.</li>
         </ul>
 
         <h2>8. Web-клиент</h2>
-        <p>Кнопка <b>Открыть Web-клиент</b> запускает просмотр графиков в браузере. Веб-клиент предназначен для просмотра данных и не заменяет настройку базы или модулей.</p>
+        <p>Кнопка <b>Открыть Web-клиент</b> запускает просмотр графиков в браузере. Слева на вкладке <b>Charts</b> — дерево сигналов по подключениям и группам: клик добавляет сигнал в активное окно графика, перетаскивание — на любой график. На вкладке <b>Bits</b> — такое же дерево, но только с 8-16 битными регистрами (BYTE/INT16/UINT16). Веб-клиент предназначен для просмотра данных и не заменяет настройку базы или модулей.</p>
 
         <h2>Если данные не отображаются</h2>
         <ol>

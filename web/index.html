@@ -54,8 +54,6 @@
         .sidebar { width: 250px; background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
         .sidebar-title { padding: 10px 12px; font-size: 11px; font-weight: bold; color: var(--text-faint); border-bottom: 1px solid var(--border-mut); text-transform: uppercase; }
         .tag-list { flex: 1; overflow-y: auto; list-style: none; margin: 0; padding: 0; }
-        .tag-item { padding: 8px 12px; font-size: 13px; cursor: pointer; display: flex; justify-content: space-between; border-bottom: 1px solid var(--bg); user-select: none; }
-        .tag-item:hover { background: var(--hover); color: var(--text-strong); }
 
         .chart-area { flex: 1; display: flex; flex-direction: column; padding: 8px; box-sizing: border-box; gap: 8px; overflow: hidden; }
         .windows-toolbar { display: flex; align-items: center; gap: 8px; }
@@ -80,7 +78,16 @@
         .chart-box { flex: 1; width: 100%; height: 100%; background: var(--plot-bg); border: 1px solid var(--border); border-radius: 4px; position: relative; overflow: hidden; }
 
         /* Вкладка Bits */
-        #page-bits { flex-direction: column; padding: 8px; box-sizing: border-box; gap: 8px; width: 100%; height: 100%; }
+        #page-bits { flex-direction: row; width: 100%; height: 100%; }
+        .bits-right { flex: 1; display: flex; flex-direction: column; padding: 8px; box-sizing: border-box; gap: 8px; min-width: 0; }
+        /* Дерево сигналов: вложенные списки с отступом и выделением выбранного */
+        .tree-list { flex: 1; overflow-y: auto; margin: 0; padding: 0; list-style: none; font-size: 13px; }
+        .tree-list ul { list-style: none; margin: 0; padding-left: 14px; }
+        .tree-node { padding: 5px 10px; cursor: pointer; user-select: none; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-radius: 3px; }
+        .tree-branch { font-weight: bold; color: var(--text-dim); }
+        .tree-leaf:hover { background: var(--hover); color: var(--text-strong); }
+        .tree-leaf.selected { background: var(--accent); color: #FFFFFF; }
+        .tree-empty { padding: 12px; color: var(--text-faint); font-size: 12px; }
     </style>
 </head>
 <body>
@@ -104,8 +111,8 @@
         <!-- 1. ВКЛАДКА CHARTS -->
         <div id="page-charts" class="tab-page active">
             <div class="sidebar">
-                <div class="sidebar-title">Сигналы в базе (клик)</div>
-                <ul class="tag-list" id="sidebar-tags">
+                <div class="sidebar-title">Дерево сигналов (клик / drag)</div>
+                <ul class="tag-list tree-list" id="sidebar-tags">
                     <li style="padding: 12px; color: var(--text-faint);">Загрузка тегов...</li>
                 </ul>
             </div>
@@ -162,9 +169,15 @@
 
         <!-- 2. ВКЛАДКА BITS -->
         <div id="page-bits" class="tab-page">
+            <div class="sidebar">
+                <div class="sidebar-title">Дерево сигналов (8-16 бит)</div>
+                <ul class="tag-list tree-list" id="bits-tree">
+                    <li class="tree-empty">Загрузка тегов...</li>
+                </ul>
+            </div>
+            <div class="bits-right">
             <div class="controls-bar">
-                <label>Регистр:</label>
-                <select id="bits-signal-select" onchange="reloadBits(true)"></select>
+                <span id="bits-current" style="font-weight:bold; color: var(--text-strong);">Регистр: —</span>
 
                 <label>Режим:</label>
                 <select id="bits-mode" onchange="onModeChange('bits')">
@@ -207,6 +220,7 @@
                 <button onclick="resetZoom(bitsChart)">🔍 100%</button>
             </div>
             <div class="chart-box" id="uplot-bits"></div>
+            </div>
         </div>
     </div>
 
@@ -459,27 +473,87 @@
                     if (t.address <= 8) bitNameMap[t.address] = `${t.name} (B${t.address})`;
                 });
                 renderSidebar();
-                renderBitSelect();
+                renderBitsTree();
             } catch (e) {
                 list.innerHTML = `<li style="padding:12px; color:#FF6384;">Ошибка: ${e.message}</li>`;
             }
         }
 
-        function renderSidebar() {
-            const list = document.getElementById('sidebar-tags');
-            list.innerHTML = allTags.map(t => `
-                <li class="tag-item" draggable="true" ondragstart="dragSignal(event, ${t.id})" onclick="addSignal(${t.id})">
-                    <span>${t.name}</span>
-                    <span style="color:var(--text-faint); font-size: 11px;">${t.unit || ''}</span>
-                </li>
-            `).join('');
+        // --- Древовидный рендер (общий для Charts и Bits) ---
+        function escHtml(s) {
+            return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         }
 
-        function renderBitSelect() {
-            const sel = document.getElementById('bits-signal-select');
-            if (sel.children.length === 0 && allTags.length > 0) {
-                sel.innerHTML = allTags.map(t => `<option value="${t.id}" ${t.name === 'BIT' ? 'selected' : ''}>${t.name}</option>`).join('');
+        function buildTreeHtml(tags, leafRenderer) {
+            const byConn = {};
+            tags.forEach(t => {
+                const c = t.connection || 'Без подключения';
+                const g = t.group || 'Общие';
+                (byConn[c] = byConn[c] || {});
+                (byConn[c][g] = byConn[c][g] || []).push(t);
+            });
+            let html = '';
+            Object.keys(byConn).sort().forEach(c => {
+                html += `<li><div class="tree-branch">🔌 ${escHtml(c)}</div><ul>`;
+                Object.keys(byConn[c]).sort().forEach(g => {
+                    html += `<li><div class="tree-branch">📁 ${escHtml(g)} (${byConn[c][g].length})</div><ul>`;
+                    html += byConn[c][g].map(leafRenderer).join('');
+                    html += `</ul></li>`;
+                });
+                html += `</ul></li>`;
+            });
+            return html;
+        }
+
+        function renderSidebar() {
+            const list = document.getElementById('sidebar-tags');
+            if (!allTags.length) {
+                list.innerHTML = `<li class="tree-empty">Нет сигналов в базе</li>`;
+                return;
             }
+            // лист: клик = добавить в активное окно, drag = перетащить на график
+            list.innerHTML = buildTreeHtml(allTags, t => `
+                <li><div class="tree-leaf" draggable="true" ondragstart="dragSignal(event, ${t.id})" onclick="addSignal(${t.id})">
+                    ${escHtml(t.name)} <span style="color:var(--text-faint); font-size:11px;">${escHtml(t.unit || '')}</span>
+                </div></li>`);
+        }
+
+        // --- ДЕРЕВО СИГНАЛОВ BITS (фильтр: целые 8-16 бит) ---
+        const BIT_TYPES = new Set(['BYTE', 'INT16', 'UINT16']);
+        let bitsSelectedId = null;
+
+        function bitsTagCount() {
+            return allTags.filter(t => BIT_TYPES.has((t.data_type || '').toUpperCase())).length;
+        }
+
+        function renderBitsTree() {
+            const root = document.getElementById('bits-tree');
+            const tags = allTags.filter(t => BIT_TYPES.has((t.data_type || '').toUpperCase()));
+            if (!tags.length) {
+                root.innerHTML = `<li class="tree-empty">Нет сигналов типа BYTE/INT16/UINT16</li>`;
+                bitsSelectedId = null;
+                return;
+            }
+            root.innerHTML = buildTreeHtml(tags, t => {
+                const sel = t.id === bitsSelectedId ? ' selected' : '';
+                return `<li><div id="bits-node-${t.id}" class="tree-leaf${sel}" onclick="selectBitsTag(${t.id})">` +
+                       `${escHtml(t.name)} [${escHtml(t.data_type)}]</div></li>`;
+            });
+            if (!bitsSelectedId || !document.getElementById(`bits-node-${bitsSelectedId}`)) {
+                selectBitsTag(tags[0].id);
+            }
+        }
+
+        function selectBitsTag(tagId) {
+            const prev = document.querySelector('.tree-leaf.selected');
+            if (prev) prev.classList.remove('selected');
+            const node = document.getElementById(`bits-node-${tagId}`);
+            if (node) node.classList.add('selected');
+            bitsSelectedId = tagId;
+            const t = allTags.find(x => x.id === tagId);
+            document.getElementById('bits-current').innerText =
+                `Регистр: ${t ? `${t.name} (${t.data_type})` : '—'}`;
+            reloadBits(true);
         }
 
         // --- CHARTS LOGIC ---
@@ -627,9 +701,8 @@
         }
 
         async function reloadBits(forceFit = false) {
-            const sel = document.getElementById('bits-signal-select');
-            const tagId = sel.value;
-            if (!tagId) return;
+            if (!bitsSelectedId) return;
+            const tagId = bitsSelectedId;
             if (forceFit) userZoomedBits = false;
 
             const res = await fetch(getBitsUrl(tagId));
@@ -637,6 +710,9 @@
             const box = document.getElementById('uplot-bits');
             box.innerHTML = '';
             if (!payload.times || payload.times.length === 0) return;
+
+            const tag = allTags.find(x => x.id === tagId);
+            const nBits = (tag && (tag.data_type || '').toUpperCase() === 'BYTE') ? 8 : 16;
 
             const data = [payload.times];
             const series = [{ label: "Time" }];
@@ -646,7 +722,7 @@
                 '#FFEB3B', '#9C27B0', '#795548', '#607D8B'
             ];
 
-            for (let b = 0; b < 16; b++) {
+            for (let b = 0; b < nBits; b++) {
                 const labelName = bitNameMap[b] || `Bit ${b}`;
                 series.push({
                     label: labelName,
@@ -671,7 +747,7 @@
                         min: (!userZoomedBits || forceFit) ? tMin : undefined,
                         max: (!userZoomedBits || forceFit) ? tMax : undefined
                     },
-                    y: { min: -0.5, max: 16.5 }
+                    y: { min: -0.5, max: nBits + 0.5 }
                 },
                 plugins: [wheelZoomPlugin('bits')],
                 axes: [
@@ -680,7 +756,7 @@
                         stroke: tc.axis, 
                         grid: { stroke: tc.grid },
                         values: (self, ticks) => ticks.map(t => {
-                            if (Number.isInteger(t) && t >= 0 && t < 16) {
+                            if (Number.isInteger(t) && t >= 0 && t < nBits) {
                                 return bitNameMap[t] ? bitNameMap[t] : `Bit ${t}`;
                             }
                             return '';

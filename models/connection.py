@@ -7,7 +7,7 @@ class Connection:
     id: int
     name: str
     # Канонические имена типов драйверов см. в drivers/registry.py
-    # ('snap7', 'modbus_client', 'modbus_server')
+    # ('snap7', 'snap7_s200', 'modbus_client', 'modbus_server')
     driver_type: str
     enabled: bool = True
     poll_interval_ms: int = 100

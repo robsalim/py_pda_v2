@@ -36,13 +36,16 @@ async def get_tags():
     if not db_service:
         return []
     tags = db_service.get_all_tags()
+    conn_names = {c.id: c.name for c in db_service.get_all_connections()}
     out = []
     for t in tags:
         try:
             addr = int(t.address_str)
         except Exception:
             addr = 0
-        out.append({"id": t.id, "name": t.name, "address": addr, "unit": t.unit})
+        out.append({"id": t.id, "name": t.name, "address": addr, "unit": t.unit,
+                    "data_type": t.data_type, "group": t.group_name or "Общие",
+                    "connection": conn_names.get(t.connection_id, "")})
     return out
 
 @app.get("/api/points/{tag_id}")

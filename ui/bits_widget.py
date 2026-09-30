@@ -1,8 +1,9 @@
 from datetime import datetime, timedelta
 import pyqtgraph as pg
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-    QComboBox, QPushButton, QDateTimeEdit
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QComboBox, QPushButton, QDateTimeEdit,
+    QTreeWidget, QTreeWidgetItem, QSplitter,
 )
 from PyQt6.QtCore import Qt, QTimer, QDateTime, QEvent
 
@@ -13,6 +14,14 @@ from ui.chart_widget import DateAxisItem, make_step_curve
 from ui import theme
 from ui.theme import S
 
+# Целочисленные типы шириной 8-16 бит, которые осмысленно раскладывать на биты
+BIT_DATA_TYPES = {"BYTE", "INT16", "UINT16"}
+
+
+def is_bit_tag(data_type: str) -> bool:
+    """Проверяет, что тип сигнала разложен на биты (8-16 битный целочисленный)."""
+    return (data_type or "").upper() in BIT_DATA_TYPES
+
 class BitsWidget(QWidget):
     def __init__(self, db_service: DatabaseService, parent=None):
         super().__init__(parent)
@@ -21,6 +30,8 @@ class BitsWidget(QWidget):
         self.is_paused = False
         self.user_is_zoomed = False
         self._cursors_initialized = False
+        self._selected_tag_id = None
+        self._bit_count = 16
 
         self._load_bit_names()
         self._init_ui()
@@ -48,22 +59,10 @@ class BitsWidget(QWidget):
         """
         Перечитать список сигналов после изменений на вкладке I/O.
         Вызывается по сигналу IOWidget.tags_changed — иначе новый тег
-        появляется в дереве I/O, но в выпадающем списке Bits его нет.
+        появляется в дереве I/O, но в дереве Bits его нет.
         """
         self._load_bit_names()
-        ticks = [[(i, self.bit_names.get(i, f"Bit {i}")) for i in range(16)]]
-        self.plot_widget.getAxis('left').setTicks(ticks)
-
-        keep = self.combo_signal.currentData()
-        self._reload_signals()
-        if keep is not None:
-            idx = self.combo_signal.findData(keep)
-            if idx >= 0:
-                self.combo_signal.blockSignals(True)
-                self.combo_signal.setCurrentIndex(idx)
-                self.combo_signal.blockSignals(False)
-        # список мог стать пустым (все теги удалены) — снять с графика
-        self.update_bit_chart(force_fit=True)
+        self._reload_signal_tree()
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -75,17 +74,11 @@ class BitsWidget(QWidget):
         btn_style = theme.ACTION_BTN_QSS
 
         header1 = QHBoxLayout()
-        lbl_sig = QLabel("Сигнал:")
-        theme.themed(lbl_sig, label_style)
-        header1.addWidget(lbl_sig)
+        self.lbl_current = QLabel("Регистр: —")
+        theme.themed(self.lbl_current, label_style)
+        header1.addWidget(self.lbl_current)
+        header1.addSpacing(20)
 
-        self.combo_signal = QComboBox()
-        theme.themed(self.combo_signal, combo_style)
-        self._reload_signals()
-        self.combo_signal.currentIndexChanged.connect(lambda: self.update_bit_chart(force_fit=True))
-        header1.addWidget(self.combo_signal)
-
-        header1.addSpacing(10)
         lbl_m = QLabel("Режим:")
         theme.themed(lbl_m, label_style)
         header1.addWidget(lbl_m)
@@ -215,7 +208,23 @@ class BitsWidget(QWidget):
             c = self.plot_widget.plot(pen=pg.mkPen(color=colors[i], width=1.5))
             self.curves.append(c)
 
-        layout.addWidget(self.plot_widget)
+        # Дерево сигналов (только 8-16 битные целые: BYTE/INT16/UINT16)
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        left_panel = QWidget()
+        lp_layout = QVBoxLayout(left_panel)
+        lp_layout.setContentsMargins(0, 0, 0, 0)
+        lbl_tree = QLabel("<b>Дерево сигналов (8-16 бит):</b>")
+        lp_layout.addWidget(lbl_tree)
+        self.tag_tree = QTreeWidget()
+        self.tag_tree.setHeaderHidden(True)
+        self.tag_tree.currentItemChanged.connect(self._on_tree_selection)
+        lp_layout.addWidget(self.tag_tree)
+        self.splitter.addWidget(left_panel)
+        self.splitter.addWidget(self.plot_widget)
+        self.splitter.setSizes([260, 1000])
+        layout.addWidget(self.splitter)
+        self._reload_signal_tree()
+
 
     def _apply_plot_theme(self, p):
         """Перекрашивает фон, оси и курсоры бит-графика под палитру p."""
@@ -337,18 +346,77 @@ class BitsWidget(QWidget):
         if not self.is_paused and self.combo_mode.currentText() == "Live":
             self.update_bit_chart(force_fit=False)
 
-    def _reload_signals(self):
-        tags = self.db.get_all_tags()
-        self.combo_signal.clear()
-        for t in tags:
-            self.combo_signal.addItem(t.name, t.id)
-        idx = self.combo_signal.findText("BIT")
-        if idx >= 0:
-            self.combo_signal.setCurrentIndex(idx)
+    def _reload_signal_tree(self):
+        """Пересобирает дерево: только подключения/группы и 8-16 битные целые теги."""
+        keep_id = self._selected_tag_id
+        self.tag_tree.blockSignals(True)
+        self.tag_tree.clear()
+        conns = self.db.get_all_connections()
+        all_tags = self.db.get_all_tags()
+        first_item = None
+        for c in conns:
+            c_tags = [t for t in all_tags
+                      if t.connection_id == c.id and is_bit_tag(t.data_type)]
+            if not c_tags:
+                continue
+            conn_item = QTreeWidgetItem([f"🔌 {c.name}"])
+            groups_dict = {}
+            for t in c_tags:
+                groups_dict.setdefault(t.group_name or "Общие", []).append(t)
+            for g_name, g_tags in sorted(groups_dict.items()):
+                group_item = QTreeWidgetItem([f"📁 {g_name} ({len(g_tags)})"])
+                for t in g_tags:
+                    label = f"{t.name} [{t.data_type}]"
+                    tag_item = QTreeWidgetItem([label])
+                    tag_item.setData(0, Qt.ItemDataRole.UserRole, t.id)
+                    tag_item.setData(0, Qt.ItemDataRole.UserRole + 1, t.data_type.upper())
+                    group_item.addChild(tag_item)
+                    if first_item is None:
+                        first_item = tag_item
+                    if keep_id is not None and t.id == keep_id:
+                        first_item = tag_item
+                conn_item.addChild(group_item)
+                group_item.setExpanded(True)
+            self.tag_tree.addTopLevelItem(conn_item)
+            conn_item.setExpanded(True)
+        self.tag_tree.blockSignals(False)
+        if first_item is not None:
+            self.tag_tree.setCurrentItem(first_item)   # вызовет _on_tree_selection
+        else:
+            self._set_selected_tag(None, None)
+            self.update_bit_chart(force_fit=True)
+
+    def _on_tree_selection(self, current, _previous):
+        if current is None:
+            return
+        tag_id = current.data(0, Qt.ItemDataRole.UserRole)
+        if tag_id is None:      # выбран узел подключения/группы — игнорируем
+            return
+        self._set_selected_tag(tag_id, current.data(0, Qt.ItemDataRole.UserRole + 1))
+        self.update_bit_chart(force_fit=True)
+
+    def _set_selected_tag(self, tag_id, data_type):
+        """Запоминает выбранный регистр и перестраивает дорожки под его ширину."""
+        self._selected_tag_id = tag_id
+        self._bit_count = 8 if data_type == "BYTE" else 16
+        name = "—"
+        if tag_id is not None:
+            t = next((x for x in self.db.get_all_tags() if x.id == tag_id), None)
+            if t:
+                name = f"{t.name} ({t.data_type})"
+        self.lbl_current.setText(f"Регистр: {name}")
+        ticks = [[(i, self.bit_names.get(i, f"Bit {i}")) for i in range(self._bit_count)]]
+        self.plot_widget.getAxis('left').setTicks(ticks)
+        self.plot_widget.setLimits(yMin=-0.5, yMax=self._bit_count + 0.5)
+        for i, curve in enumerate(self.curves):
+            curve.setVisible(i < self._bit_count)
+
 
     def update_bit_chart(self, force_fit: bool = False):
-        tag_id = self.combo_signal.currentData()
+        tag_id = self._selected_tag_id
         if tag_id is None:
+            for c in self.curves:
+                c.setData([], [])
             return
 
         is_live = (self.combo_mode.currentText() == "Live")
@@ -369,7 +437,7 @@ class BitsWidget(QWidget):
         times = np.array([p.timestamp.timestamp() for p in points])
         raw_values = np.array([int(p.value) for p in points], dtype=np.uint16)
 
-        for bit in range(16):
+        for bit in range(self._bit_count):
             bit_val = ((raw_values >> bit) & 1).astype(float)
             y_track = bit + (bit_val * 0.75)
             step_x, step_y = make_step_curve(times, y_track)
