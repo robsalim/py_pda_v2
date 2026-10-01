@@ -69,7 +69,8 @@ SIZE_BY_TYPE = {"BOOL": "X", "BYTE": "B", "FLOAT": "D", "INT16": "W",
 BASE_DATA_TYPES = ["FLOAT", "INT16", "UINT16", "BOOL"]
 S7_EXTRA_DATA_TYPES = ["BYTE", "DWORD"]
 # Имя элемента Areas из драйвера -> буква области для ввода пользователя
-LETTER_BY_AREA = {"MK": "M", "PE": "I", "PA": "Q"}
+# "SM" -> "SM": special memory S7-200 (SMB0, SMW0, SM0.0), код области 0x86
+LETTER_BY_AREA = {"MK": "M", "PE": "I", "PA": "Q", "SM": "SM"}
 
 
 # ---------------------------------------------------------------------------
@@ -1313,6 +1314,7 @@ class IOWidget(QWidget):
                     total_tags_imported += 1
 
             self.dm.restart_all()
+            self._sync_registry()
             self.reload_tree()
             QMessageBox.information(
                 self, "Успех",
@@ -1536,6 +1538,7 @@ class IOWidget(QWidget):
             self.db.delete_connection(self.selected_conn.id)
             self.selected_conn = None
             self.dm.restart_all()
+            self._sync_registry()
             self.reload_tree()
 
     def _add_tag(self):
@@ -1590,11 +1593,7 @@ class IOWidget(QWidget):
         if res != QMessageBox.StandardButton.Yes:
             return
         self.db.delete_tags([t.id for t in tags])
-        for t in tags:
-            try:
-                self.dm.registry.drop(t.id)
-            except Exception:
-                pass
+        self._sync_registry()
         self.reload_tree(preserve_group=self.selected_group)
 
     # ------------------------------------------------------------ copy tag

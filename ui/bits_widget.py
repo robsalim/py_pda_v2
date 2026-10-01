@@ -1,11 +1,12 @@
 from datetime import datetime, timedelta
+import json
 import pyqtgraph as pg
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QComboBox, QPushButton, QDateTimeEdit,
     QTreeWidget, QTreeWidgetItem, QSplitter,
 )
-from PyQt6.QtCore import Qt, QTimer, QDateTime, QEvent
+from PyQt6.QtCore import Qt, QTimer, QDateTime, QEvent, QRectF
 
 import numpy as np
 
@@ -17,23 +18,52 @@ from ui.theme import S
 # Целочисленные типы шириной 8-16 бит, которые осмысленно раскладывать на биты
 BIT_DATA_TYPES = {"BYTE", "INT16", "UINT16"}
 
+# Локальное состояние вида вкладки (порядок байт), как и тема — файл в корне
+BITS_VIEW_FILE = "bits_view.json"
+
+
+class BitsYAxisItem(pg.AxisItem):
+    """
+    Левая ось Bits: подпись тика поднята чуть выше линии сетки.
+    pyqtgraph рисует текст по центру позиции тика (там же проходит сетка);
+    сдвигаем прямоугольники текста при отрисовке, линии сетки не трогаем.
+    У верхней метки сдвиг ограничиваем границей оси, чтобы текст не обрезался.
+    """
+
+    RAISE_PX = 7
+
+    def drawPicture(self, p, axisSpec, tickSpecs, textSpecs):
+        top = self.boundingRect().top()
+        shifted = []
+        for rect, flags, text in textSpecs:
+            y = max(top, rect.y() - self.RAISE_PX)
+            shifted.append((QRectF(rect.x(), y, rect.width(), rect.height()),
+                            flags, text))
+        super().drawPicture(p, axisSpec, tickSpecs, shifted)
+
 
 def is_bit_tag(data_type: str) -> bool:
     """Проверяет, что тип сигнала разложен на биты (8-16 битный целочисленный)."""
     return (data_type or "").upper() in BIT_DATA_TYPES
 
 class BitsWidget(QWidget):
+    # цвета дорожек по номеру бита (индекс == номер бита, не позиции на экране)
+    COLORS = [
+        '#FF6384', '#4BC0C0', '#FFCE56', '#36A2EB', '#FF9F40', '#9966FF',
+        '#C9CBCF', '#00E676', '#E91E63', '#00BCD4', '#FF5722', '#8BC34A',
+        '#FFEB3B', '#9C27B0', '#795548', '#607D8B'
+    ]
+
     def __init__(self, db_service: DatabaseService, parent=None):
         super().__init__(parent)
         self.db = db_service
-        self.bit_names = {}
         self.is_paused = False
         self.user_is_zoomed = False
         self._cursors_initialized = False
         self._selected_tag_id = None
         self._bit_count = 16
+        self._byte_swap = self._load_view_state().get("byte_swap", False)
 
-        self._load_bit_names()
         self._init_ui()
 
         self.timer = QTimer(self)
@@ -41,19 +71,19 @@ class BitsWidget(QWidget):
         self.timer.timeout.connect(self._on_tick)
         self.timer.start()
 
-    def _load_bit_names(self):
-        tags = self.db.get_configured_tags()
-        self.bit_names = {}
-        for t in tags:
-            try:
-                addr = int(t.address_str)
-                if addr <= 8:
-                    self.bit_names[addr] = f"B{addr}: {t.name}"
-            except Exception:
-                pass
-        for b in range(16):
-            if b not in self.bit_names:
-                self.bit_names[b] = f"Bit {b}"
+    def _load_view_state(self) -> dict:
+        try:
+            with open(BITS_VIEW_FILE, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _save_view_state(self):
+        try:
+            with open(BITS_VIEW_FILE, "w", encoding="utf-8") as f:
+                json.dump({"byte_swap": self._byte_swap}, f)
+        except Exception:
+            pass
 
     def refresh_tags(self):
         """
@@ -61,7 +91,6 @@ class BitsWidget(QWidget):
         Вызывается по сигналу IOWidget.tags_changed — иначе новый тег
         появляется в дереве I/O, но в дереве Bits его нет.
         """
-        self._load_bit_names()
         self._reload_signal_tree()
 
     def _init_ui(self):
@@ -108,6 +137,18 @@ class BitsWidget(QWidget):
         theme.themed(self.lbl_dt, f"color: {S('cursor_dt')}; font-weight: bold; font-size: 12px;")
         header1.addWidget(self.lbl_dt)
         header1.addStretch()
+
+        self.btn_swap = QPushButton("↕ Lo-Hi" if self._byte_swap else "↕ Hi-Lo")
+        self.btn_swap.setToolTip(
+            "Порядок байт в 16-битном слове:\n"
+            "Hi-Lo — как отдаёт Siemens (старший байт первым, по умолчанию)\n"
+            "Lo-Hi — байты меняются местами")
+        self.btn_swap.setEnabled(self._bit_count == 16)
+        self._swap_tpl = btn_style
+        self._restyle_swap = theme.themed(
+            self.btn_swap, lambda p: theme.fill(self._swap_tpl, p))
+        self.btn_swap.clicked.connect(self._toggle_swap)
+        header1.addWidget(self.btn_swap)
 
         self.btn_reset_zoom = QPushButton("🔍 100%")
         theme.themed(self.btn_reset_zoom, btn_style)
@@ -162,8 +203,12 @@ class BitsWidget(QWidget):
         layout.addLayout(self.header2)
 
         self.date_axis = DateAxisItem(orientation='bottom')
+        self.bits_axis = BitsYAxisItem(orientation='left')
 
-        self.plot_widget = pg.PlotWidget(axisItems={'bottom': self.date_axis})
+        self.plot_widget = pg.PlotWidget(
+            axisItems={'bottom': self.date_axis, 'left': self.bits_axis})
+        # Bit 0 — верхняя дорожка: ось Y инвертирована, позиции кривых = номера бит
+        self.plot_widget.getViewBox().invertY(True)
         self.plot_widget.setMouseEnabled(x=True, y=False)
         self.plot_widget.enableAutoRange(axis='y')
         self.plot_widget.setLimits(yMin=-0.5, yMax=16.5)
@@ -176,7 +221,7 @@ class BitsWidget(QWidget):
         self.plot_widget.sigRangeChangedManually.connect(self._on_user_interaction)
         self.plot_widget.scene().sigMouseClicked.connect(self._on_plot_clicked)
 
-        ticks = [[(i, self.bit_names.get(i, f"Bit {i}")) for i in range(16)]]
+        ticks = self._axis_ticks(16)
         y_ax = self.plot_widget.getAxis('left')
         y_ax.setTicks(ticks)
 
@@ -199,13 +244,8 @@ class BitsWidget(QWidget):
         self._apply_plot_theme(theme.current())
 
         self.curves = []
-        colors = [
-            '#FF6384', '#4BC0C0', '#FFCE56', '#36A2EB', '#FF9F40', '#9966FF',
-            '#C9CBCF', '#00E676', '#E91E63', '#00BCD4', '#FF5722', '#8BC34A',
-            '#FFEB3B', '#9C27B0', '#795548', '#607D8B'
-        ]
         for i in range(16):
-            c = self.plot_widget.plot(pen=pg.mkPen(color=colors[i], width=1.5))
+            c = self.plot_widget.plot(pen=pg.mkPen(color=self.COLORS[i], width=1.5))
             self.curves.append(c)
 
         # Дерево сигналов (только 8-16 битные целые: BYTE/INT16/UINT16)
@@ -225,6 +265,18 @@ class BitsWidget(QWidget):
         layout.addWidget(self.splitter)
         self._reload_signal_tree()
 
+
+    def _axis_ticks(self, n: int):
+        """Подписи оси Y: всегда Bit 0..n-1; бит 0 — верхняя дорожка (position 0)."""
+        return [[(pos, f"Bit {bit}") for pos, bit in enumerate(range(n))]]
+
+    def _toggle_swap(self):
+        self._byte_swap = not self._byte_swap
+        self.btn_swap.setText("↕ Lo-Hi" if self._byte_swap else "↕ Hi-Lo")
+        self._swap_tpl = theme.btn_qss("add") if self._byte_swap else theme.ACTION_BTN_QSS
+        self._restyle_swap()
+        self._save_view_state()
+        self.update_bit_chart()
 
     def _apply_plot_theme(self, p):
         """Перекрашивает фон, оси и курсоры бит-графика под палитру p."""
@@ -405,11 +457,14 @@ class BitsWidget(QWidget):
             if t:
                 name = f"{t.name} ({t.data_type})"
         self.lbl_current.setText(f"Регистр: {name}")
-        ticks = [[(i, self.bit_names.get(i, f"Bit {i}")) for i in range(self._bit_count)]]
-        self.plot_widget.getAxis('left').setTicks(ticks)
+        self.btn_swap.setEnabled(self._bit_count == 16)
+        self.plot_widget.getAxis('left').setTicks(self._axis_ticks(self._bit_count))
         self.plot_widget.setLimits(yMin=-0.5, yMax=self._bit_count + 0.5)
-        for i, curve in enumerate(self.curves):
-            curve.setVisible(i < self._bit_count)
+        # позиция дорожки == номер бита (ось Y инвертирована: Bit 0 сверху);
+        # цвет также привязан к номеру бита
+        for bit, curve in enumerate(self.curves):
+            curve.setVisible(bit < self._bit_count)
+            curve.setPen(pg.mkPen(color=self.COLORS[bit], width=1.5))
 
 
     def update_bit_chart(self, force_fit: bool = False):
@@ -435,7 +490,12 @@ class BitsWidget(QWidget):
             return
 
         times = np.array([p.timestamp.timestamp() for p in points])
-        raw_values = np.array([int(p.value) for p in points], dtype=np.uint16)
+        # & 0xFFFF: INT16 может быть отрицательным — dtype=np.uint16 на -69 бросает
+        # OverflowError, а побитовая маска даёт корректное двухбайтовое представление
+        raw_values = np.array([int(p.value) & 0xFFFF for p in points], dtype=np.uint16)
+        if self._byte_swap and self._bit_count == 16:
+            # старший и младший байты слова меняются местами
+            raw_values = ((raw_values >> 8) | (raw_values << 8)).astype(np.uint16)
 
         for bit in range(self._bit_count):
             bit_val = ((raw_values >> bit) & 1).astype(float)

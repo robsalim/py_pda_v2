@@ -26,6 +26,7 @@ dist/
 # Служебные файлы macOS/локальные настройки
 .DS_Store
 ui_theme.json
+bits_view.json
 rel_body.json
 
 # Артефакты предпросмотра (генерируются tools_*_preview.py в корне)

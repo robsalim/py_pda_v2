@@ -139,10 +139,72 @@ def test_charts_tree_multiselect_drag():
     assert DraggableTagTree._tag_ids_of(conn) == [1, 2, 3]
 
 
+def test_bits_tree_refresh_on_io_changes():
+    """Регрессия: дерево Bits должно обновляться сразу после изменений в I/O.
+
+    Связь io_tab.tags_changed -> bits_tab.refresh_tags существовала, но сигнал
+    эмитился только через _sync_registry(), а _del_tag() и импорт JSON его не
+    вызывали — удалённый/импортированный тег оставался в дереве Bits до
+    перезапуска приложения.
+    """
+    import types as _types
+    from PyQt6.QtWidgets import QMessageBox
+    from ui.io_widget import IOWidget
+    import ui.io_widget as io_mod
+
+    tmp = tempfile.mkdtemp(prefix="pda_bits_refresh_")
+    db = DatabaseService(engine="sqlite", sqlite_path=os.path.join(tmp, "r.db"))
+    assert db.is_available
+    conn_id = db.add_connection(Connection(
+        id=0, name="C1", driver_type="snap7", enabled=False,
+        poll_interval_ms=100, config={"ip": "127.0.0.1"}))
+    tid = db.add_tag(Tag(id=0, connection_id=conn_id, name="w1",
+                         address_str="DB1.DBW2", data_type="INT16", group_name="G"))
+
+    dm = _types.SimpleNamespace(
+        drivers={},
+        reload_tags=lambda: None,
+        registry=_types.SimpleNamespace(
+            drop=lambda i: None,
+            upsert=lambda t: None,
+        ),
+        restart_all=lambda: None,
+    )
+    io = IOWidget(db, dm)
+    bits = BitsWidget(db)
+    io.tags_changed.connect(bits.refresh_tags)
+
+    io.selected_conn = db.get_all_connections()[0]
+    io.selected_group = "G"
+    tag_obj = db.get_all_tags()[0]
+    io._selected_tags = lambda: [tag_obj]
+
+    # подтверждение удаления без модального диалога
+    _orig_question = QMessageBox.question
+    QMessageBox.question = staticmethod(
+        lambda *a, **k: QMessageBox.StandardButton.Yes)
+    try:
+        io._del_tag()
+    finally:
+        QMessageBox.question = _orig_question
+
+    assert db.get_all_tags() == [], "тег не удалился из БД"
+    assert _leaf_ids(bits.tag_tree) == [], \
+        "после удаления тег остался в дереве Bits (не обновляется)"
+
+    # обратный путь: импорт/создание через _sync_registry обновляет дерево
+    tid2 = db.add_tag(Tag(id=0, connection_id=conn_id, name="w2",
+                          address_str="DB1.DBW4", data_type="UINT16", group_name="G"))
+    io._sync_registry()
+    assert dict(_leaf_ids(bits.tag_tree)) == {tid2: "UINT16"}, \
+        "новый тег не появился в дереве Bits"
+
+
 def main():
     test_is_bit_tag()
     test_bits_tree_filter_and_tracks()
     test_charts_tree_multiselect_drag()
+    test_bits_tree_refresh_on_io_changes()
     print("BITS TREE TESTS PASSED")
 
 

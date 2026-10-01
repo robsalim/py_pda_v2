@@ -68,6 +68,7 @@
         .legend-row { display: flex; align-items: center; gap: 6px; min-height: 18px; }
         .legend-line { width: 38px; height: 3px; flex: 0 0 38px; }
         .legend-name { font-size: 12px; font-weight: normal; white-space: nowrap; }
+        .legend-val { font-size: 12px; font-weight: bold; min-width: 64px; text-align: right; margin-left: auto; }
         .legend-del { width: 18px; height: 18px; margin-left: 6px; padding: 0; border: none; background: transparent; color: var(--chip-x); font-size: 14px; line-height: 16px; font-weight: normal; }
         .legend-del:hover { color: var(--text-strong); background: transparent; border: none; }
 
@@ -217,6 +218,7 @@
                     <button class="btn-load" onclick="reloadBits(true)">📥 Загрузить архив</button>
                 </span>
 
+                <button id="btn-swap-bits" onclick="toggleBitsSwap()" title="Порядок байт в 16-битном слове: Hi-Lo (старший байт первым, как отдаёт Siemens) / Lo-Hi (байты меняются местами)">↕ Hi-Lo</button>
                 <button onclick="resetZoom(bitsChart)">🔍 100%</button>
             </div>
             <div class="chart-box" id="uplot-bits"></div>
@@ -226,7 +228,7 @@
 
     <script>
         let allTags = [];
-        let bitNameMap = {};
+        let bitsByteSwap = localStorage.getItem('pda_bits_byteswap') === '1';
         let mainChart = null;
         let chartWindows = [];
         let activeWindowId = null;
@@ -468,10 +470,6 @@
             try {
                 const res = await fetch('/api/tags');
                 allTags = await res.json();
-                bitNameMap = {};
-                allTags.forEach(t => {
-                    if (t.address <= 8) bitNameMap[t.address] = `${t.name} (B${t.address})`;
-                });
                 renderSidebar();
                 renderBitsTree();
             } catch (e) {
@@ -634,11 +632,49 @@
             rebuildChartWindow(win);
         }
 
+        function fmtHoverValue(v) {
+            // зеркало desktop ChartWidget._fmt_hover_value: без экспоненты
+            if (v === null || v === undefined || isNaN(v)) return '';
+            if (Math.abs(v) >= 1 && Math.abs(v - Math.round(v)) < 1e-6) return String(Math.round(v));
+            return String(parseFloat(v.toFixed(3)));
+        }
+
+        function stepValueAt(times, values, t) {
+            // step-кривая align=1: значение держится до следующей точки
+            if (!times || !times.length || t < times[0]) return null;
+            let lo = 0, hi = times.length;
+            while (lo < hi) { const m = (lo + hi) >> 1; if (times[m] <= t) lo = m + 1; else hi = m; }
+            const idx = lo - 1;
+            return idx >= 0 ? values[idx] : null;
+        }
+
+        function bindLegendValues(win, chart) {
+            const over = chart && chart.over;
+            if (!over) return;
+            const clear = () => win.signals.forEach((s, i) => {
+                const el = win.legendVals && win.legendVals[i];
+                if (el) el.textContent = '';
+            });
+            over.addEventListener('mousemove', (e) => {
+                const rect = over.getBoundingClientRect();
+                const left = e.clientX - rect.left;
+                if (left < 0 || left > rect.width) { clear(); return; }
+                const t = chart.posToVal(left, "x");
+                win.signals.forEach((s, i) => {
+                    const el = win.legendVals && win.legendVals[i];
+                    if (!el) return;
+                    el.textContent = fmtHoverValue(stepValueAt(s.times, s.values, t));
+                });
+            });
+            over.addEventListener('mouseleave', clear);
+        }
+
         function renderLegend(win, legend) {
             legend.innerHTML = win.signals.map((s, idx) => {
                 const color = COLORS[idx % COLORS.length];
-                return `<div class="legend-row"><span class="legend-line" style="background-color:${color};"></span><span class="legend-name" style="color:${color};">${s.tag.name}</span><button class="legend-del" onclick="removeSignal(${s.tag.id}); event.stopPropagation();">×</button></div>`;
+                return `<div class="legend-row"><span class="legend-line" style="background-color:${color};"></span><span class="legend-name" style="color:${color};">${s.tag.name}</span><span class="legend-val" data-idx="${idx}" style="color:${color};"></span><button class="legend-del" onclick="removeSignal(${s.tag.id}); event.stopPropagation();">×</button></div>`;
             }).join('');
+            win.legendVals = Array.from(legend.querySelectorAll('.legend-val'));
             legend.style.display = win.signals.length ? 'flex' : 'none';
         }
 
@@ -684,7 +720,20 @@
                 series, cursor: { drag: { x: true, y: false } }
             };
             win.chart = new uPlot(opts, data, box);
+            bindLegendValues(win, win.chart);
             if (win.id === activeWindowId) mainChart = win.chart;
+        }
+
+        function toggleBitsSwap() {
+            bitsByteSwap = !bitsByteSwap;
+            localStorage.setItem('pda_bits_byteswap', bitsByteSwap ? '1' : '0');
+            updateBitsSwapButton();
+            reloadBits(false);
+        }
+
+        function updateBitsSwapButton() {
+            const btn = document.getElementById('btn-swap-bits');
+            if (btn) btn.innerText = bitsByteSwap ? '↕ Lo-Hi' : '↕ Hi-Lo';
         }
 
         // --- BITS LOGIC ---
@@ -722,15 +771,23 @@
                 '#FFEB3B', '#9C27B0', '#795548', '#607D8B'
             ];
 
+            // Bit 0 — верхняя дорожка: y = nBits-1-b (ось не инвертируем)
+            // Siemens/S7 отдаёт 16-битное слово старшим байтом вперёд;
+            // Lo-Hi меняет байты местами (только для слов, BYTE не трогает)
+            const prep = payload.values.map(v => {
+                let w = Math.floor(v) & 0xFFFF;
+                if (bitsByteSwap && nBits === 16) w = ((w >> 8) | (w << 8)) & 0xFFFF;
+                return w;
+            });
             for (let b = 0; b < nBits; b++) {
-                const labelName = bitNameMap[b] || `Bit ${b}`;
+                const pos = nBits - 1 - b;
                 series.push({
-                    label: labelName,
+                    label: `Bit ${b}`,
                     stroke: bitColors[b],
                     width: 1.5,
                     paths: uPlot.paths.stepped({ align: 1 })
                 });
-                const bitTrack = payload.values.map(v => b + (((Math.floor(v) >> b) & 1) * 0.75));
+                const bitTrack = prep.map(w => pos + (((w >> b) & 1) * 0.75));
                 data.push(bitTrack);
             }
 
@@ -755,20 +812,37 @@
                     { 
                         stroke: tc.axis, 
                         grid: { stroke: tc.grid },
-                        values: (self, ticks) => ticks.map(t => {
-                            if (Number.isInteger(t) && t >= 0 && t < nBits) {
-                                return bitNameMap[t] ? bitNameMap[t] : `Bit ${t}`;
-                            }
-                            return '';
-                        }),
-                        size: 160
+                        // подписи Bit N рисуем сами в хуке draw — чуть выше сетки
+                        values: () => [],
+                        size: 90
                     }
                 ],
+                hooks: { draw: [(self) => drawBitsTickLabels(self, nBits)] },
                 series: series,
                 cursor: { drag: { x: true, y: false } }
             };
 
             bitsChart = new uPlot(opts, data, box);
+        }
+
+        // Подписи «Bit N» для оси Y: рисуем сами поверх общего canvas uPlot —
+        // чуть выше линии сетки (uPlot рисует текст по центру позиции тика).
+        function drawBitsTickLabels(self, nBits) {
+            const ctx = self.ctx;
+            const axis = self.axes[1];
+            if (!axis || !axis._show) return;
+            const dpr = uPlot.pxRatio;
+            const gap = axis.gap * dpr;
+            const tickSize = axis.ticks.show ? Math.round(axis.ticks.size * dpr) : 0;
+            const x = Math.round(axis._pos * dpr) - (tickSize + gap);
+            ctx.font = axis.font[0];
+            ctx.fillStyle = axis.stroke(self, 1) || '#888';
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'middle';
+            for (let t = 0; t < nBits; t++) {
+                const y = self.valToPos(t, 'y', true);
+                ctx.fillText(`Bit ${nBits - 1 - t}`, x, y - 7 * dpr);
+            }
         }
 
         function resizeChart(chartInstance, containerId) {
@@ -806,6 +880,7 @@
 
         applyInitialTheme();
         initDateTimeInputs();
+        if (bitsByteSwap) updateBitsSwapButton();
         fetchTags();
     </script>
 </body>

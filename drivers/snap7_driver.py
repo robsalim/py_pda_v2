@@ -18,6 +18,11 @@ try:
         # python-snap7 1.x
         import importlib
         Areas = importlib.import_module("snap7.types").Areas
+    try:
+        # код области передаётся в низкоуровневый протокол (SM=0x86 вне enum Areas)
+        from snap7.datatypes import S7WordLen
+    except ImportError:
+        S7WordLen = None
     HAS_SNAP7 = True
     SNAP7_IMPORT_ERROR = None
 except ImportError as _e:
@@ -38,6 +43,13 @@ AREA_BY_LETTER = {
     "A": "PA",   # Ausgänge (немецкое обозначение выхода)
     "P": "PA",   # Periphery
 }
+
+# Специальная область S7-200: SM (Special Memory — SMB0, SMW0, биты SM0.0
+# Always ON / SM0.4 / SM0.5 clock-импульсы). Код области 0x86 отсутствует
+# в enum Areas python-snap7, поэтому читается напрямую по числовому коду
+# (см. Snap7Driver._read_area_block).
+S7_AREA_SM = 0x86
+RAW_AREA_CODES = {"SM": S7_AREA_SM}
 
 # Буква размера в адресе: W=2 байта, B=1 байт, D=4 байта, X=бит
 SIZE_BY_LETTER = {"W": 2, "B": 1, "D": 4, "X": 1}
@@ -310,13 +322,20 @@ class Snap7Driver(BaseDriver):
         """
         Один запрос S7 содержит до MAX_VARS адресных спецификаций, поэтому
         20 разнесённых тегоv читаются за один round-trip вместо двадцати.
+        Теги special-областей (SM, код вне enum Areas) multi-read не
+        поддерживаются — они дочитываются пакетами через _read_plan.
         """
         addrs = []
+        raw_tags = []
         for t in tags:
             a = self.parse_address(t.address_str, t.data_type)
-            if a is not None:
+            if a is None:
+                continue
+            if a.kind == "AREA" and a.area in RAW_AREA_CODES:
+                raw_tags.append(t)
+            else:
                 addrs.append((t, a))
-        if not addrs:
+        if not addrs and not raw_tags:
             return {}, True
         if not hasattr(self.client, "read_multi_vars"):
             return {}, False
@@ -340,10 +359,13 @@ class Snap7Driver(BaseDriver):
                 for (t, a), buf in zip(chunk, data):
                     # bytearray обязателен: геттеры snap7 пишут в срез
                     values[t.id] = self._extract(bytearray(buf), 0, a, t)
-            return values, True
         except Exception as e:
             self.last_error = f"multi-read ({e}); читаю пакетами по областям"
             return {}, False
+
+        if raw_tags:
+            values.update(self._read_plan(self._plan_reads(raw_tags)))
+        return values, True
 
     def _update_stats(self, cycle_s, read_s, db_s, requests, tag_count):
         # Сглаживание по скользящему среднему, чтобы показания не прыгали
@@ -402,7 +424,7 @@ class Snap7Driver(BaseDriver):
                 if kind == "DB":
                     buf = bytearray(self.client.db_read(db, start, length))
                 else:
-                    buf = bytearray(self.client.read_area(getattr(Areas, area), 0, start, length))
+                    buf = self._read_area_block(area, db, start, length)
                 self._req_count += 1
             except Exception as e:
                 self.last_error = f"{kind} {area}{'' if kind == 'AREA' else str(db)}.{start}+{length}: {e}"
@@ -472,18 +494,54 @@ class Snap7Driver(BaseDriver):
             return None
 
     def _read_area(self, s7: S7Address, tag):
-        """Одиночное чтение из MK / PE / PA (запасной путь)."""
-        area_code = getattr(Areas, s7.area, None)
-        if area_code is None:
-            self.last_error = f"Неизвестная область памяти: {s7.area}"
-            return None
+        """Одиночное чтение из MK / PE / PA / SM (запасной путь)."""
         try:
-            data = bytearray(self.client.read_area(area_code, 0, s7.offset, s7.byte_len))
+            data = self._read_area_block(s7.area, 0, s7.offset, s7.byte_len)
             self._req_count += 1
             return self._extract(data, 0, s7, tag)
         except Exception as e:
             self.last_error = f"{s7.area}{s7.offset}: {e}"
             return None
+
+    def _read_area_block(self, area: str, db: int, start: int, length: int) -> bytearray:
+        """
+        Читает length байт из именованной области. Обычные области (MK/PE/PA)
+        читаются штатным read_area; специальные области S7-200 (SM/S), коды
+        которых отсутствуют в enum Areas, — по числовому коду S7-Any.
+        """
+        code = RAW_AREA_CODES.get(area)
+        if code is not None:
+            return self._read_raw_area(code, db, start, length)
+        if not HAS_SNAP7:
+            raise RuntimeError(f"snap7 не установлен: {SNAP7_IMPORT_ERROR}")
+        enum_area = getattr(Areas, area, None)
+        if enum_area is None:
+            raise ValueError(f"Неизвестная область памяти: {area}")
+        # bytearray обязателен: геттеры snap7 пишут в срез
+        return bytearray(self.client.read_area(enum_area, db, start, length))
+
+    def _read_raw_area(self, code: int, db: int, start: int, length: int) -> bytearray:
+        """
+        Чтение области по числовому коду S7-Any (SM=0x86, S=0x85 для S7-200).
+        python-snap7 3.x пропускает такие коды черезAreas enum ->
+        обходим ограничение низкоуровневым протоколом. В 1.x read_area
+        изначально принимает числовой код.
+        """
+        protocol = getattr(self.client, "protocol", None)
+        if protocol is not None and S7WordLen is not None:
+            build = getattr(protocol, "build_read_request", None)
+            extract = getattr(protocol, "extract_read_data", None)
+            sender = getattr(self.client, "_send_receive_with_reconnect", None)
+            if build is None or extract is None or sender is None:
+                raise RuntimeError(
+                    f"python-snap7 не умеет читать область 0x{code:02X}")
+            # запрос пересобирается при каждой отправке: после auto-reconnect
+            # счётчик последовательности протокола уже другой
+            response = sender(lambda: build(
+                area=code, db_number=db, start=start,
+                word_len=S7WordLen.BYTE, count=length))
+            return bytearray(extract(response, S7WordLen.BYTE, length))
+        return bytearray(self.client.read_area(code, db, start, length))
 
     def stop(self):
         self.is_running = False

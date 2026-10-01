@@ -36,6 +36,8 @@ def parse_s200_address(address: str, data_type: str = "INT16") -> Optional[S7Add
         IW0  IB0  ID0  I0.0 / IX0.0            (входы, PE)
         QW0  QB0  QD0  Q0.1 / QX0.1            (выходы, PA)
         MW10 MB10 MD10 M10.0 / MX10.0          (Merker, MK)
+        SMB0 SMW10 SDM0 SM0.0                  (Special Memory, код 0x86)
+        S0.0                                  (state relays, код 0x85)
     """
     addr = normalize_address(address)
     if not addr:
@@ -62,6 +64,26 @@ def parse_s200_address(address: str, data_type: str = "INT16") -> Optional[S7Add
             offset=int(offset),
             bit=int(bit) if bit is not None else 0,
             v_area=True,
+        )
+
+    # Специальная область S7-200: SM (Special Memory: SMB0, SMW10, SM0.0 —
+    # например SM0.0 Always ON, SM0.4/SM0.5 clock-импульсы). Код области
+    # 0x86 вне enum Areas — читается по числовому коду (см. RAW_AREA_CODES /
+    # Snap7Driver._read_raw_area).
+    m = re.fullmatch(r"(SM)([WBXD]?)(\d+)(?:\.(\d+))?", addr)
+    if m:
+        area_name, size_letter, offset, bit = m.groups()
+        if bit is not None:
+            size = "X"
+        else:
+            size = size_letter or SIZE_BY_DATA_TYPE.get((data_type or "").upper(), "B")
+        return S7Address(
+            kind="AREA",
+            area=area_name,
+            db=0,
+            size=size,
+            offset=int(offset),
+            bit=int(bit) if bit is not None else 0,
         )
 
     # I / Q / M: мнемоника области + необязательная буква размера + смещение (+ бит).
@@ -111,18 +133,21 @@ class Snap7S200Driver(Snap7Driver):
 
     DRIVER_TYPE = "snap7_s200"
 
-    ADDRESS_HINT = "Примеры: VW100, VB5, VD20, V100.3, IW0, QW0, MW10"
+    ADDRESS_HINT = "Примеры: VW100, VB5, VD20, V100.3, IW0, QW0, MW10, SMB0, SM0.0"
 
     # V-память вместо DB-блоков: код конструктора 'V' -> буквы VB/VW/VD/V100.3
+    # SM/S — специальные области S7-200 (always-on SM0.0, clock SM0.4/SM0.5)
     ADDRESS_AREAS = [
         ("V", "V — V-память (DB1)"),
         ("M", "M — Merker (флаги)"),
         ("I", "I — образ входа"),
         ("Q", "Q — образ выхода"),
+        ("SM", "SM — Special Memory (SMB/SMW, 0x86)"),
     ]
 
     ADDRESS_FORMATS_HINT = ("VB100, VW100, VD100, V100.3 (V-память), "
-                            "IW0/IX0.0, QW0/QX0.1, MW10/MX3.4")
+                            "IW0/IX0.0, QW0/QX0.1, MW10/MX3.4, "
+                            "SMB0/SMW10/SM0.0 (SM)")
 
     ADDRESS_EXAMPLES = [
         ("VW100", "INT16", "V-память, слово — 2 байта VW100 (читается из DB1)"),
@@ -134,6 +159,11 @@ class Snap7S200Driver(Snap7Driver):
         ("QW0", "INT16", "Образ выхода (Q), 2 байта с QW0"),
         ("M10.0", "BOOL", "Merker, бит 0 в байте MB10"),
         ("MW10", "INT16", "Merker word — 2 байта MB10"),
+        ("SMB0", "BYTE", "Special Memory, байт SMB0 (область 0x86)"),
+        ("SMW0", "UINT16", "Special Memory, слово SMW0"),
+        ("SM0.0", "BOOL", "Special Memory bit — Always ON"),
+        ("SM0.4", "BOOL", "Спец. память, clock 1 Hz (125 мс ON/OFF)"),
+        ("SM0.5", "BOOL", "Спец. память, clock 1 Hz (ON 1 с / OFF 1 с)"),
     ]
 
     @staticmethod
