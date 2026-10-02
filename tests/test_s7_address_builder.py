@@ -32,9 +32,11 @@ def test_area_size_offset_build_address():
         ("M", "W", 230, "0", "MW230", "INT16"),
         ("M", "B", 5, "0", "MB5", "BYTE"),
         ("M", "D", 100, "0", "MD100", "FLOAT"),
-        ("M", "X", 3, "4", "MX3.4", "BOOL"),
+        ("M", "X", 3, "4", "M3.4", "BOOL"),
         ("I", "W", 64, "0", "IW64", "INT16"),
+        ("I", "X", 0, "1", "I0.1", "BOOL"),
         ("Q", "B", 0, "0", "QB0", "BYTE"),
+        ("Q", "X", 0, "1", "Q0.1", "BOOL"),
         ("DB", "W", 4, "0", "DB1.DBW4", "INT16"),
         ("DB", "D", 0, "0", "DB1.DBD0", "FLOAT"),
         ("DB", "X", 0, "0", "DB1.DBX0.0", "BOOL"),
@@ -75,7 +77,7 @@ def test_db_number_and_widget_gating():
     assert not d.combo_bit.isHidden()
     d._set_if(d.combo_area, "M")
     assert d.spin_db.isHidden(), "для M/I/Q номер DB не нужен"
-    assert d.txt_addr.text().startswith("MX"), d.txt_addr.text()
+    assert d.txt_addr.text().startswith("M"), d.txt_addr.text()
     print("DB / бит-гейтинг OK")
 
 
@@ -104,7 +106,7 @@ def test_bit_and_type_follow_manual_bool():
     d._set_if(d.combo_area, "M")
     d.spin_byte.setValue(3)
     d._set_if(d.combo_bit, "7")
-    assert d.txt_addr.text() == "MX3.7", d.txt_addr.text()
+    assert d.txt_addr.text() == "M3.7", d.txt_addr.text()
     assert d._validate_address()
     assert parse_s7_address(d.txt_addr.text(), "BOOL").bit == 7
     print("BOOL/бит OK")
@@ -130,7 +132,7 @@ def test_edit_keeps_compatible_type():
         # DBD/MD может быть и REAL, и DWORD — размер D допускает оба
         ("DB5.DBD0", "DWORD", "DB5.DBD0", "DWORD"),
         ("MD100", "DWORD", "MD100", "DWORD"),
-        ("MX3.4", "BOOL", "MX3.4", "BOOL"),
+        ("M3.4", "BOOL", "M3.4", "BOOL"),
         ("MW230", "INT16", "MW230", "INT16"),
     ]:
         t = Tag(id=1, connection_id=1, name="x", address_str=addr, data_type=dtype)

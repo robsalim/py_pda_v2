@@ -26,6 +26,13 @@ from drivers.registry import (
 )
 from drivers.snap7_driver import Snap7Driver
 from drivers.snap7_s200_driver import Snap7S200Driver
+from drivers.modbus_address import (
+    AREA_HOLDING,
+    MODBUS_AREAS_CLIENT,
+    MODBUS_AREAS_SERVER,
+    allowed_types,
+    parse_modbus_address,
+)
 
 # ---------------------------------------------------------------------------
 # Конструктор адреса Siemens S7
@@ -64,6 +71,10 @@ SIZE_TYPES = {"B": ("BYTE",), "W": ("INT16", "UINT16"),
 # Обратная связь: по выбранному типу подсказываем минимально подходящий размер
 SIZE_BY_TYPE = {"BOOL": "X", "BYTE": "B", "FLOAT": "D", "INT16": "W",
                 "UINT16": "W", "DWORD": "D"}
+
+# Типы Modbus по областям: битовые (C/DI) живут только с BOOL, регистровые
+# принимают целые, FLOAT и BOOL-трактовку nonzero (AREA_TYPES в драйвере)
+MODBUS_REG_TYPES = ("INT16", "UINT16", "FLOAT", "BOOL")
 
 # Набор типов: BYTE (get_byte) и DWORD (get_dword) читает только snap7
 BASE_DATA_TYPES = ["FLOAT", "INT16", "UINT16", "BOOL"]
@@ -160,6 +171,7 @@ class TagEditDialog(QDialog):
         self.driver_class = get_driver_class(self.driver_type) if self.driver_type else None
         self.setWindowTitle("Редактирование переменной" if tag else "Создать переменную")
         self.is_s7 = self.driver_type in SNAP7_DRIVER_TYPES
+        self.is_modbus = self.driver_type in ("modbus_client", "modbus_server")
         self.setFixedWidth(560 if self.is_s7 else 440)
         # Базовый стиль виджета и всех дочерних элементов по умолчанию
         theme.themed(self, _dialog_qss)
@@ -213,6 +225,8 @@ class TagEditDialog(QDialog):
 
         if self.is_s7:
             self._build_s7_address_widgets(layout)
+        elif self.is_modbus:
+            self._build_modbus_address_widgets(layout)
 
         self.lbl_addr_hint = QLabel(hint or "Адрес сигнала в формате драйвера")
         self.lbl_addr_hint.setWordWrap(True)
@@ -399,9 +413,10 @@ class TagEditDialog(QDialog):
 
             if area == "DB":
                 base = f"DB{self.spin_db.value()}.DB{size}{offset}"
-            elif area == "V":
-                # V-память SMART: бит пишется как V100.3, без буквы X
-                base = f"V{'' if size == 'X' else size}{offset}"
+            elif size == "X":
+                # Битовые адреса областей (M, I, Q, SM, V) пишутся без буквы X:
+                # M3.4, I0.1, Q0.1, SM0.0, V100.3
+                base = f"{area}{offset}"
             else:
                 base = f"{area}{size}{offset}"
             full = f"{base}.{self.combo_bit.currentText()}" if size == "X" else base
@@ -431,8 +446,113 @@ class TagEditDialog(QDialog):
         self.lbl_bit.setVisible(is_x)
         self.combo_bit.setVisible(is_x)
 
+    # ---------------------------------------------------- Modbus адрес-конструктор
+    def _build_modbus_address_widgets(self, layout: QFormLayout):
+        """
+        Простой конструктор сигнала Modbus: область (HR/IR/C/DI) + номер.
+        Результат всегда попадает в txt_addr, поэтому валидация и сохранение
+        работают по прежним правилам.
+        """
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 2, 0, 2)
+        grid.setHorizontalSpacing(8)
+        grid.setColumnStretch(1, 1)
+
+        self.mb_combo_area = QComboBox()
+        # Сервер эмулирует только записываемые карты (HR/C) — список областей
+        # берём из класса драйвера, чтобы UI и валидация не разъезжались
+        for code, label in getattr(self.driver_class, "ADDRESS_AREAS", MODBUS_AREAS_CLIENT):
+            self.mb_combo_area.addItem(label, code)
+
+        self.mb_spin_offset = QSpinBox()
+        self.mb_spin_offset.setRange(0, 65535)
+        self.mb_spin_offset.setMinimumWidth(110)
+
+        for w in (self.mb_combo_area, self.mb_spin_offset):
+            w.setMinimumHeight(30)
+
+        grid.addWidget(QLabel("Область:"), 0, 0)
+        grid.addWidget(self.mb_combo_area, 0, 1, 1, 2)
+        grid.addWidget(QLabel("Номер:"), 1, 0)
+        grid.addWidget(self.mb_spin_offset, 1, 1)
+
+        box = QWidget()
+        box.setLayout(grid)
+        box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        layout.addRow("🧩 Конструктор Modbus:", box)
+
+        self.mb_combo_area.currentIndexChanged.connect(self._mb_parts_changed)
+        self.mb_spin_offset.valueChanged.connect(self._mb_parts_changed)
+
+        # Тип задаётся областью: у битовых (C/DI) — только BOOL,
+        # у регистровых — обычный набор без S7-специфичных BYTE/DWORD.
+        self.combo_type.blockSignals(True)
+        self.combo_type.clear()
+        self.combo_type.addItems(MODBUS_REG_TYPES)
+        if self.tag and self.tag.data_type in MODBUS_REG_TYPES:
+            self.combo_type.setCurrentText(self.tag.data_type)
+        self.combo_type.blockSignals(False)
+
+        # Первичная загрузка под guard'ом: setValue у спина вызвал бы
+        # _mb_parts_changed и перезаписал адрес/тип существующего тега
+        self._syncing = True
+        try:
+            loaded = self._mb_load_from_text(self.txt_addr.text())
+        finally:
+            self._syncing = False
+        if loaded:
+            self._mb_types_for_area(self.mb_combo_area.currentData(),
+                                    keep=self.combo_type.currentText())
+        elif self.tag is None:
+            self._mb_parts_changed()
+
+    def _mb_load_from_text(self, address: str) -> bool:
+        """Заполняет конструктор из строки адреса (обратный разбор)."""
+        a = parse_modbus_address(address, self.combo_type.currentText())
+        if a is None:
+            return False
+        self._set_if(self.mb_combo_area, a.area)
+        self.mb_spin_offset.setValue(a.offset)
+        return True
+
+    def _mb_types_for_area(self, area: str, keep: str = None):
+        """Ограничивает список типов области; текущий тип сохраняем, если можно."""
+        allowed = allowed_types(area)
+        current = [self.combo_type.itemText(i) for i in range(self.combo_type.count())]
+        keep = keep or self.combo_type.currentText()
+        if tuple(current) != tuple(allowed):
+            self.combo_type.blockSignals(True)
+            self.combo_type.clear()
+            self.combo_type.addItems(allowed)
+            self.combo_type.blockSignals(False)
+        if keep in allowed:
+            self.combo_type.blockSignals(True)
+            self.combo_type.setCurrentText(keep)
+            self.combo_type.blockSignals(False)
+
+    def _mb_parts_changed(self, _=None):
+        """Части конструктора -> строка адреса; тип подстраиваем под область."""
+        if self._syncing:
+            return
+        self._syncing = True
+        try:
+            area = self.mb_combo_area.currentData()
+            offset = self.mb_spin_offset.value()
+            if area == AREA_HOLDING:
+                # HR — каноническая область, пишется простым числом:
+                # старые теги "0", "100" выглядят так же, как раньше
+                text = str(offset)
+            else:
+                text = f"{area}{offset}"
+            self.txt_addr.setText(text)
+            self._mb_types_for_area(area)
+        finally:
+            self._syncing = False
+
+        if hasattr(self, "lbl_addr_hint"):
+            self._validate_address()
+
     def _on_addr_text_changed(self, _=None):
-        """Ручной ввод в поле адреса: разбираем и отражаем в конструкторе."""
         if self._syncing:
             return
         if self.is_s7:
@@ -448,6 +568,16 @@ class TagEditDialog(QDialog):
                 # обновлён разбором, осталось подогнать список типов и видимость
                 self._restrict_types_to_size(self.combo_size.currentData())
                 self._s7_update_gating()
+        elif self.is_modbus:
+            # Ручной ввод "IR100"/"C7" отражаем в конструкторе, адрес не
+            # пересобираем (setText сорвал бы курсор при наборе)
+            self._syncing = True
+            try:
+                loaded = self._mb_load_from_text(self.txt_addr.text())
+            finally:
+                self._syncing = False
+            if loaded:
+                self._mb_types_for_area(self.mb_combo_area.currentData())
         self._validate_address()
 
     def _on_type_changed(self, _=None):
@@ -1622,20 +1752,31 @@ class IOWidget(QWidget):
         """
         addr = (address or "").strip()
 
+        # Modbus с областью: C7 -> C8, DI15 -> DI16, HR100(FLOAT) -> HR102.
+        # Явный префикс HR сохраняем, канонический (число) — остаётся числом.
+        mb = parse_modbus_address(addr)
+        if mb is not None and (not addr.lstrip("-").isdigit() or mb.area != AREA_HOLDING):
+            step = mb.size(data_type)
+            explicit = addr[:1].isalpha() or "x" in addr.lower()
+            if mb.area == AREA_HOLDING and not explicit:
+                return str(mb.offset + step)
+            return f"{mb.area}{mb.offset + step}"
+
         if addr.lstrip("-").isdigit():
             step = 2 if (data_type or "").upper() == "FLOAT" else 1
             return str(int(addr) + step)
 
-        # S7: DB1.DBW4 / DB1.DBX0.0 / MW230 / VW100 / V100.3 / MX3.4
-        # V — V-память S7-200 SMART; бит у SMART пишут без буквы X (V100.3)
-        m = re.fullmatch(r"(?:DB(\d+)\.DB([WBXD])(\d+)|([MVIEQ])([WBXD]?)(\d+))(?:\.(\d+))?",
+        # S7: DB1.DBW4 / DB1.DBX0.0 / MW230 / VW100 / V100.3 / M3.4 / SM0.0
+        m = re.fullmatch(r"(?:DB(\d+)\.DB([WBXD])(\d+)|([MVIEQ]|SM)([WBXD]?)(\d+))(?:\.(\d+))?",
                          addr.upper().replace("%", "").replace(" ", ""))
         if not m:
             return addr
         bit = int(m.group(7) or 0)
         size_letter = (m.group(2) or m.group(5)
                        or {"FLOAT": "D", "DWORD": "D", "BOOL": "X",
-                          "BYTE": "B"}.get((data_type or "").upper(), "W"))
+                           "BYTE": "B"}.get((data_type or "").upper(), "W"))
+        if m.group(7) is not None:
+            size_letter = "X"
         byte_len = {"W": 2, "B": 1, "D": 4, "X": 1}[size_letter]
 
         if size_letter == "X":
@@ -1647,16 +1788,12 @@ class IOWidget(QWidget):
             prefix = f"DB{m.group(1)}.DB{size_letter}{int(m.group(3)) + byte_len}"
             return f"{prefix}.{bit}" if size_letter == "X" else prefix
 
-        # форма <область><размер><смещение> (V для SMART — без буквы X у бита)
+        # форма <область><размер><смещение> (M, I, Q, SM, V — без буквы X у бита)
         area = m.group(4)
-        if area == "V" and size_letter == "X":
+        if size_letter == "X":
             return f"{area}{int(m.group(6)) + byte_len}.{bit}"
         prefix = f"{area}{size_letter}{int(m.group(6)) + byte_len}"
-        return f"{prefix}.{bit}" if size_letter == "X" else prefix
-
-        # форма <область><размер><смещение>
-        prefix = f"{m.group(4)}{size_letter}{int(m.group(6)) + byte_len}"
-        return f"{prefix}.{bit}" if size_letter == "X" else prefix
+        return prefix
 
     def _copy_last_tag(self):
         """Дублирует выбранную (или последнюю) переменную со сдвигом адреса и имени."""

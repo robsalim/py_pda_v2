@@ -7,6 +7,16 @@ from typing import Dict, List, Optional, Tuple
 from pymodbus.client import ModbusTcpClient
 
 from drivers.base_driver import BaseDriver
+from drivers.modbus_address import (
+    AREA_COIL,
+    AREA_DISCRETE,
+    AREA_HOLDING,
+    AREA_INPUT,
+    MAX_BITS_PER_REQUEST,
+    MAX_REGS_PER_REQUEST,
+    parse_modbus_address,
+    validate_modbus_address,
+)
 from models.connection import Connection
 from database.db_service import DatabaseService
 
@@ -14,32 +24,31 @@ from database.db_service import DatabaseService
 class ModbusClientDriver(BaseDriver):
     DRIVER_TYPE = "modbus_client"
 
-    ADDRESS_HINT = "Десятичный адрес регистра: 0, 100, 40001"
+    ADDRESS_HINT = "Адрес Modbus: 100 (HR), HR100, IR200, C7, DI15"
 
     ADDRESS_EXAMPLES = [
-        ("0", "INT16", "Holding register №0"),
-        ("100", "UINT16", "Holding register №100"),
-        ("40001", "FLOAT", "Занимает 2 регистра: 40001 и 40002"),
+        ("0", "INT16", "Holding register №0 (число без префикса = HR)"),
+        ("HR100", "UINT16", "Holding register №100"),
+        ("HR40001", "FLOAT", "Занимает 2 регистра: HR40001 и HR40002"),
+        ("IR200", "UINT16", "Input register №200 (FC04, только чтение)"),
+        ("C7", "BOOL", "Coil №7 — дискретный выход (FC01)"),
+        ("DI15", "BOOL", "Discrete input №15 — дискретный вход (FC02)"),
     ]
 
-    # Лимит регистров в одном запросе FC03 по спецификации Modbus
-    MAX_REGS_PER_REQUEST = 125
+    # Методы pymodbus по областям: FC03 / FC04 / FC01 / FC02
+    READ_METHODS = {
+        AREA_HOLDING: "read_holding_registers",
+        AREA_INPUT: "read_input_registers",
+        AREA_COIL: "read_coils",
+        AREA_DISCRETE: "read_discrete_inputs",
+    }
+
     # Разрыв между адресами, который выгоднее прочитать «заодно»
     merge_gap = 8
 
     @classmethod
     def validate_address(cls, address: str, data_type: str = "FLOAT"):
-        base_err = super().validate_address(address, data_type)
-        if base_err:
-            return base_err
-        try:
-            value = int(str(address).strip())
-        except ValueError:
-            return (f"Не понимаю адрес '{address}'. Modbus — это целое число "
-                    f"адреса регистра, например 0, 100 или 40001")
-        if value < 0:
-            return "Адрес регистра не может быть отрицательным"
-        return None
+        return validate_modbus_address(address, data_type)
 
     def __init__(self, connection: Connection, db_service: DatabaseService, registry=None):
         super().__init__(connection, db_service, registry=registry)
@@ -47,6 +56,10 @@ class ModbusClientDriver(BaseDriver):
         self.port = int(self.connection.config.get("port", 502))
         self.slave_id = int(self.connection.config.get("slave_id", 1))
         self.client = None
+        # pymodbus >= 3.7 переименовал slave= в device_id=, а в 3.15 старое
+        # имя удалено полностью. Запоминаем, какое ключевое слово принимает
+        # клиент, чтобы драйвер работал и на 3.5, и на 3.15.
+        self._device_kw = "device_id"
         # Кэш списка тегов, чтобы не читать БД каждый цикл
         self.tag_cache_ttl = 2.0
         self._tags = []
@@ -133,66 +146,114 @@ class ModbusClientDriver(BaseDriver):
             self._tags_at = now
         return self._tags
 
-    # ------------------------------------------------------------------ reads
-    def _plan_blocks(self, tags) -> List[Tuple[int, int]]:
+    # ------------------------------------------------------------- transport
+    def _request(self, method_name: str, address: int, count: int):
         """
-        Собирает из адресов тегов регистровые блоки: соседние адреса читаются
-        одним запросом FC03 вместо запроса на каждый тег.
-        Возвращает [(start, count), ...].
+        Вызов read_* с совместимостью по имени параметра адреса устройства:
+        pymodbus 3.5-3.6 знает только slave=, 3.7+ — device_id= (в 3.15
+        slave= удалён). Первый TypeError переключает имя, дальше без проб.
         """
-        needed = set()
-        for t in tags:
+        meth = getattr(self.client, method_name)
+        names = ("device_id", "slave") if self._device_kw == "device_id" else ("slave", "device_id")
+        for i, kw in enumerate(names):
             try:
-                addr = int(t.address_str)
-            except (TypeError, ValueError):
+                result = meth(address, count=count, **{kw: self.slave_id})
+            except TypeError as exc:
+                if "unexpected keyword argument" not in str(exc):
+                    raise
+                if i + 1 >= len(names):
+                    return None
                 continue
-            needed.add(addr)
-            if (t.data_type or "").upper() == "FLOAT":
-                needed.add(addr + 1)
-        if not needed:
-            return []
+            # Запоминаем имя, которое реально принял клиент
+            self._device_kw = kw
+            return result
+        return None
 
-        addrs = sorted(needed)
-        blocks = []
-        start = prev = addrs[0]
-        for a in addrs[1:]:
-            if a <= prev + 1 + self.merge_gap and (a - start + 1) <= self.MAX_REGS_PER_REQUEST:
-                prev = a
+    # ------------------------------------------------------------------ plan
+    def _plan_by_area(self, tags) -> Dict[str, List[Tuple[int, int]]]:
+        """
+        Собирает блоки чтения по областям: соседние адреса одной области
+        читаются одним запросом вместо запроса на каждый тег.
+        Возвращает {область: [(start, count), ...]}.
+        """
+        needed: Dict[str, set] = {}
+        for t in tags:
+            a = parse_modbus_address(t.address_str, t.data_type or "")
+            if a is None:
                 continue
-            blocks.append((start, prev - start + 1))
-            start = prev = a
-        blocks.append((start, prev - start + 1))
+            offs = needed.setdefault(a.area, set())
+            offs.add(a.offset)
+            if not a.is_bit and (t.data_type or "").upper() == "FLOAT":
+                # FLOAT занимает второй регистр: его тоже надо прочитать
+                offs.add(a.offset + 1)
+
+        blocks: Dict[str, List[Tuple[int, int]]] = {}
+        for area, offs in needed.items():
+            limit = MAX_BITS_PER_REQUEST if area in (AREA_COIL, AREA_DISCRETE) \
+                else MAX_REGS_PER_REQUEST
+            addrs = sorted(offs)
+            out = []
+            start = prev = addrs[0]
+            for x in addrs[1:]:
+                if x <= prev + 1 + self.merge_gap and (x - start + 1) <= limit:
+                    prev = x
+                    continue
+                out.append((start, prev - start + 1))
+                start = prev = x
+            out.append((start, prev - start + 1))
+            blocks[area] = out
         return blocks
 
-    def _read_blocks(self, tags) -> Dict[int, int]:
-        """Читает все блоки и возвращает {номер_регистра: значение}."""
-        regs: Dict[int, int] = {}
-        for start, count in self._plan_blocks(tags):
-            rr = self.client.read_holding_registers(start, count=count, slave=self.slave_id)
-            self._req_count += 1
-            if rr is None or rr.isError():
-                self.last_error = f"FC03 {start}+{count}: {rr}"
-                continue
-            for i, v in enumerate(rr.registers):
-                regs[start + i] = v
-        return regs
+    # ----------------------------------------------------------------- reads
+    def _read_blocks(self, tags) -> Dict[tuple, object]:
+        """
+        Читает все блоки всех областей.
+        Возвращает {(область, смещение): значение}: int для регистров,
+        bool для битовых областей.
+        """
+        cells: Dict[tuple, object] = {}
+        for area, blocks in self._plan_by_area(tags).items():
+            method = self.READ_METHODS[area]
+            bitwise = area in (AREA_COIL, AREA_DISCRETE)
+            for start, count in blocks:
+                rr = self._request(method, start, count)
+                self._req_count += 1
+                if rr is None or rr.isError():
+                    self.last_error = f"FC{area} {start}+{count}: {rr}"
+                    continue
+                if bitwise:
+                    for i, bit in enumerate(rr.bits[:count]):
+                        cells[(area, start + i)] = bool(bit)
+                else:
+                    for i, v in enumerate(rr.registers[:count]):
+                        cells[(area, start + i)] = int(v)
+        return cells
 
     # ----------------------------------------------------------------- decode
     @staticmethod
-    def _decode_raw(tag, regs: Dict[int, int]) -> Optional[float]:
-        try:
-            addr = int(tag.address_str)
-        except (TypeError, ValueError):
+    def _decode_raw(tag, cells: Dict[tuple, object]) -> Optional[float]:
+        """Превращает прочитанную ячейку области в числовое значение тега."""
+        a = parse_modbus_address(tag.address_str, tag.data_type or "")
+        if a is None:
             return None
         dtype = (tag.data_type or "").upper()
-        if dtype == "FLOAT":
-            if addr not in regs or addr + 1 not in regs:
+
+        if a.is_bit:
+            bit = cells.get((a.area, a.offset))
+            if bit is None:
                 return None
-            raw_b = struct.pack(">HH", regs[addr], regs[addr + 1])
-            return struct.unpack(">f", raw_b)[0]
-        if addr not in regs:
+            return 1.0 if bit else 0.0
+
+        v = cells.get((a.area, a.offset))
+        if v is None:
             return None
-        v = regs[addr]
+        v = int(v)
+        if dtype == "FLOAT":
+            v2 = cells.get((a.area, a.offset + 1))
+            if v2 is None:
+                return None
+            raw_b = struct.pack(">HH", v, int(v2))
+            return struct.unpack(">f", raw_b)[0]
         if dtype == "INT16":
             return float(struct.unpack(">h", struct.pack(">H", v))[0])
         if dtype == "BOOL":

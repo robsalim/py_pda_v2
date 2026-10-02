@@ -131,7 +131,7 @@ class ChartWidget(QWidget):
         theme.themed(self.lbl_live_span, label_style)
         self.combo_live_span = QComboBox()
         theme.themed(self.combo_live_span, combo_style)
-        self.combo_live_span.addItems(["15 мин", "1 час", "4 часа", "12 часов", "24 часа", "72 часа"])
+        self.combo_live_span.addItems(["5 мин", "15 мин", "1 час", "4 часа", "12 часов", "24 часа", "72 часа"])
         self.combo_live_span.setCurrentText("24 часа")
         self.combo_live_span.currentTextChanged.connect(self._on_span_changed)
         header1.addWidget(self.lbl_live_span)
@@ -192,7 +192,7 @@ class ChartWidget(QWidget):
         theme.themed(self.lbl_arch_dur, label_style)
         self.combo_duration = QComboBox()
         theme.themed(self.combo_duration, combo_style)
-        self.combo_duration.addItems(["15 мин", "1 час", "4 часа", "12 часов", "24 часа", "72 часа"])
+        self.combo_duration.addItems(["5 мин", "15 мин", "1 час", "4 часа", "12 часов", "24 часа", "72 часа"])
         self.combo_duration.setCurrentText("24 часа")
         self.combo_duration.currentTextChanged.connect(self._on_span_changed)
 
@@ -449,6 +449,7 @@ class ChartWidget(QWidget):
 
     def _parse_span_text(self, text: str) -> timedelta:
         t = str(text).strip()
+        if "5" in t and "мин" in t: return timedelta(minutes=5)
         if "15" in t and "мин" in t: return timedelta(minutes=15)
         if "1" in t and "час" in t and "12" not in t: return timedelta(hours=1)
         if "4" in t and "час" in t and "24" not in t: return timedelta(hours=4)

@@ -44,12 +44,7 @@ AREA_BY_LETTER = {
     "P": "PA",   # Periphery
 }
 
-# Специальная область S7-200: SM (Special Memory — SMB0, SMW0, биты SM0.0
-# Always ON / SM0.4 / SM0.5 clock-импульсы). Код области 0x86 отсутствует
-# в enum Areas python-snap7, поэтому читается напрямую по числовому коду
-# (см. Snap7Driver._read_area_block).
-S7_AREA_SM = 0x86
-RAW_AREA_CODES = {"SM": S7_AREA_SM}
+
 
 # Буква размера в адресе: W=2 байта, B=1 байт, D=4 байта, X=бит
 SIZE_BY_LETTER = {"W": 2, "B": 1, "D": 4, "X": 1}
@@ -118,11 +113,15 @@ def parse_s7_address(address: str, data_type: str = "INT16") -> Optional[S7Addre
         area = AREA_BY_LETTER.get(area_letter)
         if area is None:
             return None
+        if bit is not None:
+            size = "X"
+        else:
+            size = size_letter or SIZE_BY_DATA_TYPE.get((data_type or "").upper(), "B")
         return S7Address(
             kind="AREA",
             area=area,
             db=0,
-            size=size_letter or SIZE_BY_DATA_TYPE.get((data_type or "").upper(), "B"),
+            size=size,
             offset=int(offset),
             bit=int(bit) if bit is not None else 0,
         )
@@ -138,7 +137,7 @@ class Snap7Driver(BaseDriver):
 
     DRIVER_TYPE = "snap7"
 
-    ADDRESS_HINT = "Примеры: MW230, MD100, MX3.4, DB1.DBW4, DB1.DBD0, DB1.DBX0.0"
+    ADDRESS_HINT = "Примеры: MW230, MD100, M3.4, I0.1, Q0.0, DB1.DBW4, DB1.DBD0, DB1.DBX0.0"
 
     # Области памяти для конструктора адреса в GUI (код, подпись)
     ADDRESS_AREAS = [
@@ -152,7 +151,9 @@ class Snap7Driver(BaseDriver):
         ("MW230", "INT16", "Merker word — 2 байта, начиная с MB230"),
         ("MB5", "BYTE", "Merker byte — 1 байт MB5"),
         ("MD100", "FLOAT", "Merker dword — 4 байта MD100 (REAL)"),
-        ("MX3.4", "BOOL", "Бит 4 в байте MB3"),
+        ("M3.4", "BOOL", "Бит 4 в байте MB3 (без буквы X)"),
+        ("I0.1", "BOOL", "Бит 1 в байте IB0 (без буквы X)"),
+        ("Q0.0", "BOOL", "Бит 0 в байте QB0 (без буквы X)"),
         ("IW64", "INT16", "Образ входа (I), 2 байта с IW64"),
         ("QW0", "INT16", "Образ выхода (Q), 2 байта с QW0"),
         ("DB1.DBW4", "INT16", "Слово в блоке данных DB1, смещение 4"),
@@ -331,11 +332,8 @@ class Snap7Driver(BaseDriver):
             a = self.parse_address(t.address_str, t.data_type)
             if a is None:
                 continue
-            if a.kind == "AREA" and a.area in RAW_AREA_CODES:
-                raw_tags.append(t)
-            else:
-                addrs.append((t, a))
-        if not addrs and not raw_tags:
+            addrs.append((t, a))
+        if not addrs:
             return {}, True
         if not hasattr(self.client, "read_multi_vars"):
             return {}, False
@@ -442,7 +440,11 @@ class Snap7Driver(BaseDriver):
                 if rel + a.byte_len > len(buf):
                     continue
                 try:
-                    values[t.id] = self._extract(buf, rel, a, t)
+                   # values[t.id] = self._extract(buf, rel, a, t)
+                    # ДОБАВИТЬ ЭТИ 3 СТРОКИ:
+                    val = self._extract(buf, rel, a, t)
+                    values[t.id] = val
+                    print(f"[DEBUG] РАСПАКОВКА SCADA: {t.address_str} = {val}")
                 except Exception as e:
                     self.last_error = f"{t.address_str}: {e}"
         return values
@@ -476,6 +478,7 @@ class Snap7Driver(BaseDriver):
     # ------------------------------------------------------------------
     def _read_tag(self, tag):
         s7 = self.parse_address(tag.address_str, tag.data_type)
+        # print(f"[DEBUG] Парсинг тега {tag.address_str} -> {s7}") # <--- ДОБАВИТЬ ЭТУ СТРОКУ
         if s7 is None:
             self.last_error = f"Неизвестный формат адреса: '{tag.address_str}'"
             return None
@@ -494,7 +497,7 @@ class Snap7Driver(BaseDriver):
             return None
 
     def _read_area(self, s7: S7Address, tag):
-        """Одиночное чтение из MK / PE / PA / SM (запасной путь)."""
+        """Одиночное чтение из MK / PE / PA ."""
         try:
             data = self._read_area_block(s7.area, 0, s7.offset, s7.byte_len)
             self._req_count += 1
@@ -506,12 +509,8 @@ class Snap7Driver(BaseDriver):
     def _read_area_block(self, area: str, db: int, start: int, length: int) -> bytearray:
         """
         Читает length байт из именованной области. Обычные области (MK/PE/PA)
-        читаются штатным read_area; специальные области S7-200 (SM/S), коды
-        которых отсутствуют в enum Areas, — по числовому коду S7-Any.
+        читаются штатным read_area.
         """
-        code = RAW_AREA_CODES.get(area)
-        if code is not None:
-            return self._read_raw_area(code, db, start, length)
         if not HAS_SNAP7:
             raise RuntimeError(f"snap7 не установлен: {SNAP7_IMPORT_ERROR}")
         enum_area = getattr(Areas, area, None)
@@ -520,29 +519,7 @@ class Snap7Driver(BaseDriver):
         # bytearray обязателен: геттеры snap7 пишут в срез
         return bytearray(self.client.read_area(enum_area, db, start, length))
 
-    def _read_raw_area(self, code: int, db: int, start: int, length: int) -> bytearray:
-        """
-        Чтение области по числовому коду S7-Any (SM=0x86, S=0x85 для S7-200).
-        python-snap7 3.x пропускает такие коды черезAreas enum ->
-        обходим ограничение низкоуровневым протоколом. В 1.x read_area
-        изначально принимает числовой код.
-        """
-        protocol = getattr(self.client, "protocol", None)
-        if protocol is not None and S7WordLen is not None:
-            build = getattr(protocol, "build_read_request", None)
-            extract = getattr(protocol, "extract_read_data", None)
-            sender = getattr(self.client, "_send_receive_with_reconnect", None)
-            if build is None or extract is None or sender is None:
-                raise RuntimeError(
-                    f"python-snap7 не умеет читать область 0x{code:02X}")
-            # запрос пересобирается при каждой отправке: после auto-reconnect
-            # счётчик последовательности протокола уже другой
-            response = sender(lambda: build(
-                area=code, db_number=db, start=start,
-                word_len=S7WordLen.BYTE, count=length))
-            return bytearray(extract(response, S7WordLen.BYTE, length))
-        return bytearray(self.client.read_area(code, db, start, length))
-
+        
     def stop(self):
         self.is_running = False
         self.status = "Stopped"

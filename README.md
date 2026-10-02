@@ -8,7 +8,6 @@
 
 - Siemens S7-300 / S7-400 / S7-1200 / S7-1500 (через snap7).
 - Siemens S7-200 SMART (прямая адресация V-памяти: VW100, VD20, V100.3).
-- Специальные области S7-200: SM (Special Memory — SMB0, SMW10, SM0.0) и S (state relays — S0.0), включая системные биты SM0.0 (Always ON) и часовые импульсы SM0.4 / SM0.5.
 - Modbus TCP-клиент (Master) и встроенный Modbus TCP-сервер (Slave/Bridge).
 
 ### Вкладка I/O Configuration
