@@ -79,7 +79,7 @@ def connect_postgres(params):
 
 def create_database(cfg):
     """Создаёт целевую сетевую БД, подключаясь без выбора целевой базы."""
-    engine = cfg.get("engine", "postgres")
+    engine = cfg.get("engine", "mysql")
     dbname = cfg.get("dbname", "pda_data")
     if not dbname:
         raise ValueError("Не указано имя базы данных")
@@ -144,7 +144,7 @@ class DatabaseService:
                 pass
 
         self.cfg.update(conn_kwargs)
-        self.engine = self.cfg.get("engine", "postgres")
+        self.engine = self.cfg.get("engine", "sqlite")
         # Есть ли в data_points колонка quality (создаётся миграцией схемы)
         self.has_quality = False
         try:

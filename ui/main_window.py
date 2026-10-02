@@ -402,6 +402,11 @@ class MainWindow(QMainWindow):
         self.dm.start_all()
 
         self.io_tab.db = self.db
+        self.db_tab.db = self.db  # <--- ДОБАВИТЬ ЭТУ СТРОКУ
+        # --- ДОБАВИТЬ ЭТИ ДВЕ СТРОКИ ---
+        self.bits_tab.db = self.db
+        self.bits_tab.refresh_tags()
+        # -------------------------------
         self.io_tab.reload_tree()
         self._reload_tag_tree()
         for ch in self.chart_widgets:

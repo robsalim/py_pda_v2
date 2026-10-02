@@ -161,7 +161,7 @@ class BitsWidget(QWidget):
         theme.themed(self.lbl_span, label_style)
         self.combo_span = QComboBox()
         theme.themed(self.combo_span, combo_style)
-        self.combo_span.addItems(["15 мин", "1 час", "4 часа", "12 часов", "24 часа", "72 часа"])
+        self.combo_span.addItems(["5 мин", "15 мин", "1 час", "4 часа", "12 часов", "24 часа", "72 часа"])
         self.combo_span.setCurrentText("24 часа")
         self.combo_span.currentTextChanged.connect(lambda: self.update_bit_chart(force_fit=True))
         self.header2.addWidget(self.lbl_span)
@@ -179,7 +179,7 @@ class BitsWidget(QWidget):
         theme.themed(self.lbl_arch_dur, label_style)
         self.combo_duration = QComboBox()
         theme.themed(self.combo_duration, combo_style)
-        self.combo_duration.addItems(["15 мин", "1 час", "4 часа", "12 часов", "24 часа", "72 часа"])
+        self.combo_duration.addItems(["5 мин","15 мин", "1 час", "4 часа", "12 часов", "24 часа", "72 часа"])
         self.combo_duration.setCurrentText("24 часа")
 
         self.btn_nav_prev = QPushButton("◀")
@@ -211,7 +211,7 @@ class BitsWidget(QWidget):
         self.plot_widget.getViewBox().invertY(True)
         self.plot_widget.setMouseEnabled(x=True, y=False)
         self.plot_widget.enableAutoRange(axis='y')
-        self.plot_widget.setLimits(yMin=-0.5, yMax=16.5)
+        self.plot_widget.setLimits(yMin=-1.25, yMax=15.75)
 
         view_box = self.plot_widget.getViewBox()
         view_box.setMouseMode(pg.ViewBox.RectMode)
@@ -296,6 +296,7 @@ class BitsWidget(QWidget):
 
     def _parse_span_text(self, text: str) -> timedelta:
         t = str(text).strip()
+        if "5" in t and "мин" in t: return timedelta(minutes=5)
         if "15" in t and "мин" in t: return timedelta(minutes=15)
         if "1" in t and "час" in t and "12" not in t: return timedelta(hours=1)
         if "4" in t and "час" in t and "24" not in t: return timedelta(hours=4)
@@ -459,7 +460,7 @@ class BitsWidget(QWidget):
         self.lbl_current.setText(f"Регистр: {name}")
         self.btn_swap.setEnabled(self._bit_count == 16)
         self.plot_widget.getAxis('left').setTicks(self._axis_ticks(self._bit_count))
-        self.plot_widget.setLimits(yMin=-0.5, yMax=self._bit_count + 0.5)
+        self.plot_widget.setLimits(yMin=-1.25, yMax=self._bit_count - 0.25)
         # позиция дорожки == номер бита (ось Y инвертирована: Bit 0 сверху);
         # цвет также привязан к номеру бита
         for bit, curve in enumerate(self.curves):
@@ -499,7 +500,7 @@ class BitsWidget(QWidget):
 
         for bit in range(self._bit_count):
             bit_val = ((raw_values >> bit) & 1).astype(float)
-            y_track = bit + (bit_val * 0.75)
+            y_track = bit - (bit_val * 0.75) - 0.05
             step_x, step_y = make_step_curve(times, y_track)
             self.curves[bit].setData(step_x, step_y)
 

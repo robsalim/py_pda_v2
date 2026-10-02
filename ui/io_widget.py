@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QMenu, QSizePolicy
 )
 from PyQt6.QtCore import Qt, QTimer, QMimeData, pyqtSignal
-from PyQt6.QtGui import QDrag, QDropEvent, QDragEnterEvent, QDragMoveEvent
+from PyQt6.QtGui import QDrag, QDropEvent, QDragEnterEvent, QDragMoveEvent, QColor, QBrush
 from database.db_service import DatabaseService
 from models.connection import Connection
 from models.tag import Tag
@@ -414,8 +414,8 @@ class TagEditDialog(QDialog):
             if area == "DB":
                 base = f"DB{self.spin_db.value()}.DB{size}{offset}"
             elif size == "X":
-                # Битовые адреса областей (M, I, Q, SM, V) пишутся без буквы X:
-                # M3.4, I0.1, Q0.1, SM0.0, V100.3
+                # Битовые адреса областей (M, I, Q, V) пишутся без буквы X:
+                # M3.4, I0.1, Q0.1, V100.3
                 base = f"{area}{offset}"
             else:
                 base = f"{area}{size}{offset}"
@@ -1114,7 +1114,22 @@ class IOWidget(QWidget):
         prev_data = prev.data(0, Qt.ItemDataRole.UserRole) if prev else None
 
         self.io_tree.clear()
-        conns = self.db.get_all_connections()
+
+        try:
+            # 1. Принудительно "дергаем" базу, чтобы проверить физическую связь
+            with self.db._get_connection() as _:
+                pass
+            # 2. Если связь есть, спокойно получаем модули
+            conns = self.db.get_all_connections()
+            
+        except Exception as e:
+            # Если связи нет, сработает исключение и появится красная надпись
+            warn_item = QTreeWidgetItem(["⚠ Нет подключения к базе данных"])
+            warn_item.setForeground(0, QBrush(QColor("red")))
+            warn_item.setToolTip(0, str(e))
+            warn_item.setDisabled(True)
+            self.io_tree.addTopLevelItem(warn_item)
+            return
 
         item_to_select = None
         same_conn_item = None
