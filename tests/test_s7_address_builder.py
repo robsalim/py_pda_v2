@@ -129,8 +129,9 @@ def test_edit_keeps_compatible_type():
     for addr, dtype, want_addr, want_type in [
         ("DB1.DBW4", "UINT16", "DB1.DBW4", "UINT16"),   # слово + UINT16 — норма
         ("DB5.DBD0", "FLOAT", "DB5.DBD0", "FLOAT"),
-        # DBD/MD может быть и REAL, и DWORD — размер D допускает оба
+        # DBD/MD может быть REAL, DWORD и DINT — размер D допускает все три
         ("DB5.DBD0", "DWORD", "DB5.DBD0", "DWORD"),
+        ("DB5.DBD0", "DINT", "DB5.DBD0", "DINT"),
         ("MD100", "DWORD", "MD100", "DWORD"),
         ("M3.4", "BOOL", "M3.4", "BOOL"),
         ("MW230", "INT16", "MW230", "INT16"),
@@ -145,7 +146,7 @@ def test_edit_keeps_compatible_type():
 
 def test_types_follow_size():
     """Список типов = только актуальные для размера: B->BYTE, W->INT16/UINT16,
-    D->FLOAT/DWORD, X->BOOL."""
+    D->FLOAT/DWORD/DINT, X->BOOL."""
     d = _dlg()
 
     def types():
@@ -164,6 +165,8 @@ def test_types_follow_size():
 
     d._set_if(d.combo_size, "D")
     assert "DWORD" in types() and "FLOAT" in types(), types()
+    # DINT — знаковое 32-битное, тоже читается из размера D
+    assert "DINT" in types(), types()
     assert "INT16" not in types() and "BYTE" not in types(), types()
     d.combo_type.setCurrentText("DWORD")
     assert d.txt_addr.text().startswith("MD"), d.txt_addr.text()
@@ -171,11 +174,36 @@ def test_types_follow_size():
     d._set_if(d.combo_size, "X")
     assert types() == ["BOOL"], types()
 
-    # BYTE/DWORD умеет читать только snap7 (get_byte / get_dword)
+    # BYTE/DWORD/DINT умеет читать только snap7 (get_byte / get_dword / get_dint)
     md = TagEditDialog(conn_id=1, driver_type="modbus_client")
     md_types = [md.combo_type.itemText(i) for i in range(md.combo_type.count())]
     assert "DWORD" not in md_types and "BYTE" not in md_types, md_types
-    print("типы по размеру (BYTE/DWORD), только для S7 OK")
+    assert "DINT" not in md_types, md_types
+    print("типы по размеру (BYTE/DWORD/DINT), только для S7 OK")
+
+
+def test_dint_decode_signed():
+    """Размер D: DWORD беззнаковый, DINT знаковый (отрицательные значения)."""
+    import drivers.snap7_driver as sd
+    from models.tag import Tag
+
+    if not sd.HAS_SNAP7:
+        print("декодирование DINT пропущено (snap7 недоступен)")
+        return
+
+    from drivers.snap7_driver import Snap7Driver
+
+    class _A:
+        size, bit = "D", 0
+
+    buf = bytearray.fromhex("FFFFFFFE")  # DINT = -2, DWORD = 4294967294
+    t_dint = Tag(id=1, connection_id=1, name="d", address_str="DB1.DBD0", data_type="DINT")
+    t_udint = Tag(id=2, connection_id=1, name="u", address_str="DB1.DBD0", data_type="DWORD")
+    assert Snap7Driver._extract(buf, 0, _A(), t_dint) == -2
+    assert Snap7Driver._extract(buf, 0, _A(), t_udint) == 4294967294
+    # адрес без буквы размера для DINT тоже читается как 4 байта
+    assert parse_s7_address("MD100", "DINT").size == "D"
+    print("DINT знаковый / DWORD беззнаковый OK")
 
 
 def test_unparsable_address_not_scrambled():
@@ -198,5 +226,6 @@ if __name__ == "__main__":
     test_non_s7_driver_has_no_builder()
     test_edit_keeps_compatible_type()
     test_types_follow_size()
+    test_dint_decode_signed()
     test_unparsable_address_not_scrambled()
     print("ALL S7 ADDRESS BUILDER TESTS PASSED")

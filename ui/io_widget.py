@@ -63,25 +63,24 @@ SNAP7_DRIVER_TYPES = {Snap7Driver.DRIVER_TYPE, Snap7S200Driver.DRIVER_TYPE}
 # причина «плывущих» значений).
 TYPE_BY_SIZE = {"B": "BYTE", "W": "INT16", "D": "FLOAT", "X": "BOOL"}
 # Типы, которые драйвер реально умеет читать из адреса данного размера
-# (см. Snap7Driver._extract): B -> byte, W -> int/uint, D -> real/dword,
+# (см. Snap7Driver._extract): B -> byte, W -> int/uint, D -> real/dword/dint,
 # X -> бит. Навязываем тип, только если выбранный в этот набор не входит,
 # чтобы не портить корректную пару «DB1.DBW4 + UINT16» при редактировании.
 SIZE_TYPES = {"B": ("BYTE",), "W": ("INT16", "UINT16"),
-              "D": ("FLOAT", "DWORD"), "X": ("BOOL",)}
+              "D": ("FLOAT", "DWORD", "DINT"), "X": ("BOOL",)}
 # Обратная связь: по выбранному типу подсказываем минимально подходящий размер
 SIZE_BY_TYPE = {"BOOL": "X", "BYTE": "B", "FLOAT": "D", "INT16": "W",
-                "UINT16": "W", "DWORD": "D"}
+                "UINT16": "W", "DWORD": "D", "DINT": "D"}
 
 # Типы Modbus по областям: битовые (C/DI) живут только с BOOL, регистровые
 # принимают целые, FLOAT и BOOL-трактовку nonzero (AREA_TYPES в драйвере)
 MODBUS_REG_TYPES = ("INT16", "UINT16", "FLOAT", "BOOL")
 
-# Набор типов: BYTE (get_byte) и DWORD (get_dword) читает только snap7
+# Набор типов: BYTE (get_byte), DWORD (get_dword) и DINT (get_dint) читает только snap7
 BASE_DATA_TYPES = ["FLOAT", "INT16", "UINT16", "BOOL"]
-S7_EXTRA_DATA_TYPES = ["BYTE", "DWORD"]
+S7_EXTRA_DATA_TYPES = ["BYTE", "DWORD", "DINT"]
 # Имя элемента Areas из драйвера -> буква области для ввода пользователя
-# "SM" -> "SM": special memory S7-200 (SMB0, SMW0, SM0.0), код области 0x86
-LETTER_BY_AREA = {"MK": "M", "PE": "I", "PA": "Q", "SM": "SM"}
+LETTER_BY_AREA = {"MK": "M", "PE": "I", "PA": "Q"}
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +196,7 @@ class TagEditDialog(QDialog):
         self.combo_type = QComboBox()
         # Для Siemens список типов всё равно ограничивается размером адреса
         # (_restrict_types_to_size), а полный набор актуален для modbus.
-        # BYTE (get_byte) и DWORD (get_dword) умеет читать только snap7.
+        # BYTE (get_byte), DWORD (get_dword) и DINT (get_dint) умеет читать только snap7.
         types = BASE_DATA_TYPES + (S7_EXTRA_DATA_TYPES if self.is_s7 else [])
         self.combo_type.addItems(types)
         if tag and tag.data_type in types:
@@ -350,7 +349,7 @@ class TagEditDialog(QDialog):
         """
         В списке типов оставляем только те, что драйвер реально читает из
         адреса данного размера (B -> BYTE, W -> INT16/UINT16,
-        D -> FLOAT/DWORD, X -> BOOL). Текущий тип сохраняем, если он совместим.
+        D -> FLOAT/DWORD/DINT, X -> BOOL). Текущий тип сохраняем, если он совместим.
         """
         allowed = SIZE_TYPES.get(size, ())
         if not allowed:
@@ -1781,14 +1780,14 @@ class IOWidget(QWidget):
             step = 2 if (data_type or "").upper() == "FLOAT" else 1
             return str(int(addr) + step)
 
-        # S7: DB1.DBW4 / DB1.DBX0.0 / MW230 / VW100 / V100.3 / M3.4 / SM0.0
-        m = re.fullmatch(r"(?:DB(\d+)\.DB([WBXD])(\d+)|([MVIEQ]|SM)([WBXD]?)(\d+))(?:\.(\d+))?",
+        # S7: DB1.DBW4 / DB1.DBX0.0 / MW230 / VW100 / V100.3 / M3.4
+        m = re.fullmatch(r"(?:DB(\d+)\.DB([WBXD])(\d+)|([MVIEQ])([WBXD]?)(\d+))(?:\.(\d+))?",
                          addr.upper().replace("%", "").replace(" ", ""))
         if not m:
             return addr
         bit = int(m.group(7) or 0)
         size_letter = (m.group(2) or m.group(5)
-                       or {"FLOAT": "D", "DWORD": "D", "BOOL": "X",
+                       or {"FLOAT": "D", "DWORD": "D", "DINT": "D", "BOOL": "X",
                            "BYTE": "B"}.get((data_type or "").upper(), "W"))
         if m.group(7) is not None:
             size_letter = "X"
@@ -1803,7 +1802,7 @@ class IOWidget(QWidget):
             prefix = f"DB{m.group(1)}.DB{size_letter}{int(m.group(3)) + byte_len}"
             return f"{prefix}.{bit}" if size_letter == "X" else prefix
 
-        # форма <область><размер><смещение> (M, I, Q, SM, V — без буквы X у бита)
+        # форма <область><размер><смещение> (M, I, Q, V — без буквы X у бита)
         area = m.group(4)
         if size_letter == "X":
             return f"{area}{int(m.group(6)) + byte_len}.{bit}"

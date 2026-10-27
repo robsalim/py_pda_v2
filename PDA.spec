@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('web', 'web')],
     hiddenimports=['drivers.modbus_client_driver', 'drivers.modbus_server_driver', 'drivers.modbus_address'],
     hookspath=[],
     hooksconfig={},

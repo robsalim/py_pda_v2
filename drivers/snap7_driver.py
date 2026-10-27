@@ -12,17 +12,17 @@ try:
     import snap7
     from snap7.util import get_bool, get_int, get_uint, get_real, get_dword, get_byte
     try:
+        # DINT — знаковое 32-битное; get_dint есть не во всех версиях python-snap7
+        from snap7.util import get_dint
+    except ImportError:
+        get_dint = None
+    try:
         # python-snap7 >= 2.x
         from snap7.type import Areas
     except ImportError:
         # python-snap7 1.x
         import importlib
         Areas = importlib.import_module("snap7.types").Areas
-    try:
-        # код области передаётся в низкоуровневый протокол (SM=0x86 вне enum Areas)
-        from snap7.datatypes import S7WordLen
-    except ImportError:
-        S7WordLen = None
     HAS_SNAP7 = True
     SNAP7_IMPORT_ERROR = None
 except ImportError as _e:
@@ -50,9 +50,10 @@ AREA_BY_LETTER = {
 SIZE_BY_LETTER = {"W": 2, "B": 1, "D": 4, "X": 1}
 
 # Размер по умолчанию, если буква размера в адресе не указана
-# BYTE: беззнаковый байт (get_byte), DWORD: беззнаковое 32-битное (get_dword)
+# BYTE: беззнаковый байт (get_byte), DWORD: беззнаковое 32-битное (get_dword),
+# DINT: знаковое 32-битное (get_dint)
 SIZE_BY_DATA_TYPE = {"FLOAT": "D", "INT16": "W", "UINT16": "W",
-                     "BOOL": "X", "BYTE": "B", "DWORD": "D"}
+                     "BOOL": "X", "BYTE": "B", "DWORD": "D", "DINT": "D"}
 
 
 @dataclass
@@ -159,6 +160,7 @@ class Snap7Driver(BaseDriver):
         ("DB1.DBW4", "INT16", "Слово в блоке данных DB1, смещение 4"),
         ("DB5.DBD0", "FLOAT", "Real в DB5, смещение 0"),
         ("DB5.DBD0", "DWORD", "Беззнаковое 32-битное в DB5, смещение 0"),
+        ("DB5.DBD0", "DINT", "Знаковое 32-битное в DB5, смещение 0"),
         ("DB1.DBX0.0", "BOOL", "Бит 0 в байте 0 блока DB1"),
     ]
 
@@ -323,8 +325,8 @@ class Snap7Driver(BaseDriver):
         """
         Один запрос S7 содержит до MAX_VARS адресных спецификаций, поэтому
         20 разнесённых тегоv читаются за один round-trip вместо двадцати.
-        Теги special-областей (SM, код вне enum Areas) multi-read не
-        поддерживаются — они дочитываются пакетами через _read_plan.
+        Если multi-read недоступен или значение не удалось, чтение выполняется
+        пакетами по областям через _read_plan.
         """
         addrs = []
         raw_tags = []
@@ -455,10 +457,25 @@ class Snap7Driver(BaseDriver):
         if addr.size == "X":
             return 1.0 if get_bool(buf, rel, addr.bit) else 0.0
         if addr.size == "D":
-            return get_real(buf, rel) if tag.data_type == "FLOAT" else get_dword(buf, rel)
+            dtype = (tag.data_type or "").upper()
+            if dtype == "FLOAT":
+                return get_real(buf, rel)
+            if dtype == "DINT":
+                return Snap7Driver._get_dint(buf, rel)
+            # DWORD — беззнаковое 32-битное
+            return get_dword(buf, rel)
         if addr.size == "W":
             return get_uint(buf, rel) if tag.data_type == "UINT16" else get_int(buf, rel)
         return get_byte(buf, rel)
+
+    @staticmethod
+    def _get_dint(buf, rel) -> int:
+        """Знаковое 32-битное (DINT): get_dint либо ручной пересчёт из DWORD."""
+        if get_dint is not None:
+            return get_dint(buf, rel)
+        # python-snap7 без get_dint: старший бит знака переносим вручную
+        value = get_dword(buf, rel)
+        return value - (1 << 32) if value >= (1 << 31) else value
 
     # Подсказка формата для сообщения об ошибке разбора адреса
     ADDRESS_FORMATS_HINT = ("MW230, MB5, MD100, MX3.4, IW64, QW0, "

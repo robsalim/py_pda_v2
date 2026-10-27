@@ -9,12 +9,13 @@ import argparse
 from pathlib import Path
 
 DEFAULT_REPO = "robsalim/py_pda_v2"
-DEFAULT_TAG = "v2.1.6"
+DEFAULT_TAG = "v2.1.7"
 
 BODY = """## Что нового
-- Удален код SM для S7-200
-- Обновлен Modbus
-- Обновлен README
+- Добавлен знаковый тип DINT для S7 (отрицательные значения)
+- DWORD остается беззнаковым, FLOAT для вещественных
+- Читаемые типы в диалоге тега: BYTE, DWORD, DINT (+ WORD/REAL по области)
+- Удалены остатки мёртвой SM-области S7-200
 """
 
 def get_token() -> str:
